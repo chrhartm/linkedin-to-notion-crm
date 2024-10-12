@@ -11,27 +11,11 @@ class NotionManager:
 
     def ensure_database_exists(self):
         try:
-            search_results = self.client.search(
-                query="CRM Contacts",
-                filter={
-                    "property": "object",
-                    "value": "database"
-                },
-                parent={
-                    "type": "page_id",
-                    "page_id": self.page_id
-                }
-            ).get("results")
-
-            if search_results:
-                self.database_id = search_results[0]["id"]
-                logging.info(f"Connected to existing database with ID: {self.database_id}")
-            else:
-                logging.info("Database not found. Creating a new one.")
-                self.create_database()
-        except Exception as e:
-            logging.error(f"Error while checking for existing database: {str(e)}")
+            logging.info("Creating a new database.")
             self.create_database()
+        except Exception as e:
+            logging.error(f"Error while creating database: {str(e)}")
+            raise
 
     def create_database(self):
         properties = {
@@ -65,20 +49,27 @@ class NotionManager:
             raise ValueError(f"Failed to create database. Error: {str(e)}")
 
     def add_contact(self, contact):
-        self.client.pages.create(
-            parent={"database_id": self.database_id},
-            properties={
-                "Name": {"title": [{"text": {"content": contact["Name"]}}]},
-                "Email": {"email": contact["Email"]},
-                "Phone": {"phone_number": contact["Phone"]},
-                "Company": {"rich_text": [{"text": {"content": contact["Company"]}}]},
-                "Position": {"rich_text": [{"text": {"content": contact["Position"]}}]},
-                "Field of Work": {"select": {"name": contact["Field of Work"]}},
-                "Last Contacted": {"date": {"start": contact["Last Contacted"]}},
-                "Contact Schedule": {"select": {"name": contact["Contact Schedule"]}},
-                "Overdue": {"checkbox": False},
-            }
-        )
+        properties = {
+            "Name": {"title": [{"text": {"content": contact.get("Name", "")}}]},
+            "Email": {"email": contact.get("Email", "")},
+            "Phone": {"phone_number": contact.get("Phone", "")},
+            "Company": {"rich_text": [{"text": {"content": contact.get("Company", "")}}]},
+            "Position": {"rich_text": [{"text": {"content": contact.get("Position", "")}}]},
+            "Field of Work": {"select": {"name": contact.get("Field of Work", "Unknown")}},
+            "Last Contacted": {"date": {"start": contact.get("Last Contacted", "1970-01-01")}},
+            "Contact Schedule": {"select": {"name": contact.get("Contact Schedule", "Monthly")}},
+            "Overdue": {"checkbox": False},
+        }
+
+        try:
+            self.client.pages.create(
+                parent={"database_id": self.database_id},
+                properties=properties
+            )
+            logging.info(f"Added contact: {contact.get('Name', 'Unknown')}")
+        except Exception as e:
+            logging.error(f"Error adding contact {contact.get('Name', 'Unknown')}: {str(e)}")
+            raise
 
     def update_contact(self, page_id, updates):
         properties = {}
@@ -100,7 +91,12 @@ class NotionManager:
             elif key == "Overdue":
                 properties[key] = {"checkbox": value}
 
-        self.client.pages.update(page_id=page_id, properties=properties)
+        try:
+            self.client.pages.update(page_id=page_id, properties=properties)
+            logging.info(f"Updated contact with page ID: {page_id}")
+        except Exception as e:
+            logging.error(f"Error updating contact: {str(e)}")
+            raise
 
     def get_all_contacts(self):
         try:

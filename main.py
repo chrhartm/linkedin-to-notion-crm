@@ -28,6 +28,7 @@ def main():
         # Test commands
         test_commands = [
             "help",
+            "sync sample_linkedin_export.csv",
             "list_contacts",
             "update_overdue",
             "quit"
@@ -35,15 +36,19 @@ def main():
         
         for cmd in test_commands:
             print(f"\nExecuting command: {cmd}")
-            cli.onecmd(cmd)
+            try:
+                cli.onecmd(cmd)
+            except Exception as e:
+                logging.error(f"Error executing command '{cmd}': {str(e)}")
+                print(f"Error executing command '{cmd}': {str(e)}")
 
     except ValueError as ve:
         logging.error(f"Configuration error: {str(ve)}")
         print(f"Configuration error: {str(ve)}")
         print("Please make sure you've set the NOTION_TOKEN and NOTION_PAGE_ID environment variables.")
     except Exception as e:
-        logging.error(f"An error occurred: {str(e)}")
-        print(f"An error occurred: {str(e)}")
+        logging.error(f"An unexpected error occurred: {str(e)}")
+        print(f"An unexpected error occurred: {str(e)}")
         print("Please check the logs for more information.")
 
 if __name__ == "__main__":
