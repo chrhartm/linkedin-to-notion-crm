@@ -24,8 +24,22 @@ class NotionManager:
             "LinkedIn URL": {"url": {}},
             "Company": {"rich_text": {}},
             "Position": {"rich_text": {}},
-            "Industry": {"select": {}},
-            "Field of Work": {"select": {}},
+            "Industry": {"select": {
+                "options": [
+                    {"name": "Technology", "color": "blue"},
+                    {"name": "Marketing", "color": "green"},
+                    {"name": "Finance", "color": "yellow"},
+                    {"name": "Other", "color": "gray"}
+                ]
+            }},
+            "Field of Work": {"select": {
+                "options": [
+                    {"name": "Software Development", "color": "blue"},
+                    {"name": "Data Science", "color": "green"},
+                    {"name": "Product Management", "color": "yellow"},
+                    {"name": "Other", "color": "gray"}
+                ]
+            }},
             "Last Contacted": {"date": {}},
             "Contact Schedule": {"select": {
                 "options": [
@@ -51,11 +65,11 @@ class NotionManager:
     def add_contact(self, contact):
         properties = {
             "Name": {"title": [{"text": {"content": contact.get("Name", "")}}]},
-            "LinkedIn URL": {"url": contact.get("LinkedIn URL", "")},
+            "LinkedIn URL": {"url": contact.get("LinkedIn URL") or None},
             "Company": {"rich_text": [{"text": {"content": contact.get("Company", "")}}]},
             "Position": {"rich_text": [{"text": {"content": contact.get("Position", "")}}]},
-            "Industry": {"select": {"name": contact.get("Industry", "Unknown")}},
-            "Field of Work": {"select": {"name": contact.get("Field of Work", "Unknown")}},
+            "Industry": {"select": {"name": contact.get("Industry", "Other")}},
+            "Field of Work": {"select": {"name": contact.get("Field of Work", "Other")}},
             "Last Contacted": {"date": {"start": contact.get("Last Contacted", "1970-01-01")}},
             "Contact Schedule": {"select": {"name": contact.get("Contact Schedule", "Monthly")}},
             "Overdue": {"checkbox": False},
@@ -77,7 +91,7 @@ class NotionManager:
             if key == "Name":
                 properties[key] = {"title": [{"text": {"content": value}}]}
             elif key == "LinkedIn URL":
-                properties[key] = {"url": value}
+                properties[key] = {"url": value if value else None}
             elif key in ["Company", "Position"]:
                 properties[key] = {"rich_text": [{"text": {"content": value}}]}
             elif key in ["Industry", "Field of Work"]:
@@ -109,32 +123,46 @@ class NotionManager:
     def update_overdue_status(self):
         contacts = self.get_all_contacts()
         today = datetime.now().date()
+        updated_count = 0
+        skipped_count = 0
 
         for contact in contacts:
-            properties = contact.get("properties", {})
-            last_contacted = properties.get("Last Contacted", {}).get("date", {})
-            schedule = properties.get("Contact Schedule", {}).get("select", {})
-            
-            if last_contacted and schedule:
+            try:
+                properties = contact.get("properties", {})
+                last_contacted = properties.get("Last Contacted", {}).get("date", {})
+                schedule = properties.get("Contact Schedule", {}).get("select", {})
+                
+                if not last_contacted or not schedule:
+                    logging.warning(f"Skipping contact {contact['id']} due to missing Last Contacted or Contact Schedule")
+                    skipped_count += 1
+                    continue
+
                 last_contacted_date = last_contacted.get("start")
                 schedule_name = schedule.get("name")
 
-                if last_contacted_date and schedule_name:
-                    last_contacted_date = datetime.strptime(last_contacted_date, "%Y-%m-%d").date()
-                    days_since_contact = (today - last_contacted_date).days
+                if not last_contacted_date or not schedule_name:
+                    logging.warning(f"Skipping contact {contact['id']} due to invalid Last Contacted or Contact Schedule")
+                    skipped_count += 1
+                    continue
 
-                    overdue = False
-                    if schedule_name == "Weekly" and days_since_contact > 7:
-                        overdue = True
-                    elif schedule_name == "Monthly" and days_since_contact > 30:
-                        overdue = True
-                    elif schedule_name == "Quarterly" and days_since_contact > 90:
-                        overdue = True
-                    elif schedule_name == "Yearly" and days_since_contact > 365:
-                        overdue = True
+                last_contacted_date = datetime.strptime(last_contacted_date, "%Y-%m-%d").date()
+                days_since_contact = (today - last_contacted_date).days
 
-                    self.update_contact(contact["id"], {"Overdue": overdue})
-                else:
-                    logging.warning(f"Skipping contact {contact['id']} due to missing last contacted date or schedule")
-            else:
-                logging.warning(f"Skipping contact {contact['id']} due to missing properties")
+                overdue = False
+                if schedule_name == "Weekly" and days_since_contact > 7:
+                    overdue = True
+                elif schedule_name == "Monthly" and days_since_contact > 30:
+                    overdue = True
+                elif schedule_name == "Quarterly" and days_since_contact > 90:
+                    overdue = True
+                elif schedule_name == "Yearly" and days_since_contact > 365:
+                    overdue = True
+
+                self.update_contact(contact["id"], {"Overdue": overdue})
+                updated_count += 1
+
+            except Exception as e:
+                logging.error(f"Error updating overdue status for contact {contact['id']}: {str(e)}")
+                skipped_count += 1
+
+        logging.info(f"Updated overdue status for {updated_count} contacts. Skipped {skipped_count} contacts.")

@@ -19,11 +19,15 @@ def main():
         notion_manager = NotionManager()
         linkedin_parser = LinkedInParser()
         contact_manager = ContactManager(notion_manager, linkedin_parser)
-        cli = CLI(contact_manager)
+
+        # Test syncing contacts
+        contact_manager.sync_contacts("sample_linkedin_export.csv")
+        contact_manager.update_overdue_status()
 
         logging.info("Personal CRM application started")
         
         # Run the CLI
+        cli = CLI(contact_manager)
         cli.cmdloop()
 
     except ValueError as ve:
