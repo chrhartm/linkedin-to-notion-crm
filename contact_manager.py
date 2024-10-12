@@ -28,15 +28,6 @@ class ContactManager:
             logging.error(f"Error syncing contacts: {str(e)}")
             raise
 
-    def update_overdue_status(self):
-        try:
-            # Update overdue status for all contacts
-            self.notion_manager.update_overdue_status()
-            logging.info("Updated overdue status for all contacts.")
-        except Exception as e:
-            logging.error(f"Error updating overdue status: {str(e)}")
-            raise
-
     def update_contact(self, page_id, updates):
         try:
             # Update a specific contact

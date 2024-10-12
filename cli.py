@@ -18,7 +18,6 @@ class CLI(cmd.Cmd):
             print("Please provide the path to the LinkedIn export file.")
             return
         self.contact_manager.sync_contacts(arg)
-        self.contact_manager.update_overdue_status()
 
     def do_update_contact(self, arg):
         "Update a specific contact: update_contact <page_id> <json_updates>"
@@ -120,7 +119,7 @@ class CLI(cmd.Cmd):
     def do_list_overdue(self, arg):
         "List all overdue contacts"
         contacts = self.contact_manager.get_all_contacts()
-        overdue_contacts = [contact for contact in contacts if contact['properties'].get('Overdue', {}).get('checkbox', False)]
+        overdue_contacts = [contact for contact in contacts if self._format_property(contact['properties'].get('Overdue')) == 'true']
 
         if not overdue_contacts:
             print("No overdue contacts found.")
@@ -163,8 +162,8 @@ class CLI(cmd.Cmd):
                 return prop['select']['name'] if prop['select'] else 'N/A'
             elif 'url' in prop:
                 return prop['url']
-            elif 'checkbox' in prop:
-                return 'Yes' if prop['checkbox'] else 'No'
+            elif 'formula' in prop:
+                return str(prop['formula'].get('boolean', 'N/A'))
             elif 'date' in prop:
                 return prop['date']['start'] if prop['date'] else 'N/A'
         return str(prop)

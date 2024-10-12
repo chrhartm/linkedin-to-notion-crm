@@ -50,7 +50,16 @@ class NotionManager:
                     {"name": "Yearly", "color": "red"}
                 ]
             }},
-            "Overdue": {"checkbox": {}},
+            "Overdue": {"formula": {
+                "expression": """
+                if(prop("Contact Schedule") == "Never", false,
+                   if(prop("Contact Schedule") == "Weekly", dateBetween(prop("Last Contacted"), now(), "weeks") > 1,
+                   if(prop("Contact Schedule") == "Monthly", dateBetween(prop("Last Contacted"), now(), "months") > 1,
+                   if(prop("Contact Schedule") == "Quarterly", dateBetween(prop("Last Contacted"), now(), "quarters") > 1,
+                   if(prop("Contact Schedule") == "Yearly", dateBetween(prop("Last Contacted"), now(), "years") > 1,
+                   false)))))
+                """
+            }},
             "Email": {"email": {}},
             "Tags": {"multi_select": {
                 "options": [
@@ -93,7 +102,6 @@ class NotionManager:
                 "Field of Work": {"select": {"name": contact["Field of Work"]}},
                 "Last Contacted": {"date": {"start": contact["Last Contacted"]}},
                 "Contact Schedule": {"select": {"name": "Never"}},
-                "Overdue": {"checkbox": False}
             }
             self.client.pages.create(parent={"database_id": self.database_id}, properties=properties)
             logging.info(f"Added contact: {contact['Name']}")
@@ -115,8 +123,6 @@ class NotionManager:
                     properties[key] = {"select": {"name": value}}
                 elif key == "Last Contacted":
                     properties[key] = {"date": {"start": value}}
-                elif key == "Overdue":
-                    properties[key] = {"checkbox": value}
             
             self.client.pages.update(page_id=page_id, properties=properties)
             logging.info(f"Updated contact with page ID: {page_id}")
@@ -132,36 +138,4 @@ class NotionManager:
             return contacts
         except Exception as e:
             logging.error(f"Error retrieving contacts: {str(e)}")
-            raise
-
-    def update_overdue_status(self):
-        try:
-            contacts = self.get_all_contacts()
-            for contact in contacts:
-                properties = contact["properties"]
-                last_contacted = properties.get("Last Contacted", {}).get("date", {}).get("start")
-                contact_schedule = properties.get("Contact Schedule", {}).get("select", {}).get("name")
-                
-                if last_contacted and contact_schedule:
-                    last_contacted_date = datetime.fromisoformat(last_contacted)
-                    current_date = datetime.now()
-                    
-                    if contact_schedule == "Never":
-                        overdue = False
-                    elif contact_schedule == "Weekly":
-                        overdue = (current_date - last_contacted_date) > timedelta(weeks=1)
-                    elif contact_schedule == "Monthly":
-                        overdue = (current_date - last_contacted_date) > timedelta(days=30)
-                    elif contact_schedule == "Quarterly":
-                        overdue = (current_date - last_contacted_date) > timedelta(days=90)
-                    elif contact_schedule == "Yearly":
-                        overdue = (current_date - last_contacted_date) > timedelta(days=365)
-                    else:
-                        overdue = False
-                    
-                    self.update_contact(contact["id"], {"Overdue": overdue})
-            
-            logging.info("Updated overdue status for all contacts")
-        except Exception as e:
-            logging.error(f"Error updating overdue status: {str(e)}")
             raise
