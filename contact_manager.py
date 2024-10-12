@@ -12,7 +12,7 @@ class ContactManager:
             
             # Get existing contacts from Notion
             existing_contacts = self.notion_manager.get_all_contacts()
-            existing_linkedin_urls = set(contact['properties']['LinkedIn URL']['url'] for contact in existing_contacts if contact['properties']['LinkedIn URL']['url'])
+            existing_linkedin_urls = {contact['properties']['LinkedIn URL']['url'] for contact in existing_contacts if contact['properties']['LinkedIn URL']['url']}
             
             # Sync LinkedIn contacts to Notion database
             for contact in linkedin_contacts:

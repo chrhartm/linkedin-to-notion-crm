@@ -4,8 +4,8 @@ import logging
 class LinkedInParser:
     def parse_linkedin_export(self, file_path='Connections.csv'):
         try:
-            # Parse the LinkedIn data export CSV file
-            df = pd.read_csv(file_path)
+            # Skip the first three lines as they contain export notes
+            df = pd.read_csv(file_path, skiprows=3)
             contacts = []
 
             # Define mappings for expected column names
@@ -16,7 +16,8 @@ class LinkedInParser:
                 'Company': ['Company', 'Organization', 'Company Name'],
                 'Position': ['Position', 'Job Title', 'Title'],
                 'Industry': ['Industry'],
-                'Connected On': ['Connected On', 'Connection Date', 'Connected_On']
+                'Connected On': ['Connected On', 'Connection Date', 'Connected_On'],
+                'Profile URL': ['Profile URL', 'LinkedIn URL', 'Public Profile URL']
             }
 
             # Find the actual column names in the CSV
@@ -31,13 +32,14 @@ class LinkedInParser:
             for _, row in df.iterrows():
                 contact = {
                     "Name": f"{row[actual_columns.get('First Name', '')]} {row[actual_columns.get('Last Name', '')]}".strip(),
-                    "LinkedIn URL": "",  # LinkedIn URL is not typically included in the export
+                    "LinkedIn URL": row.get(actual_columns.get('Profile URL', ''), ''),
                     "Company": row.get(actual_columns.get('Company', ''), ''),
                     "Position": row.get(actual_columns.get('Position', ''), ''),
                     "Industry": row.get(actual_columns.get('Industry', ''), 'Unknown'),
                     "Field of Work": "Unknown",  # This field is not typically in LinkedIn exports
                     "Last Contacted": row.get(actual_columns.get('Connected On', ''), '1970-01-01'),
                     "Contact Schedule": "Monthly",  # Set a default schedule
+                    "Connected On": row.get(actual_columns.get('Connected On', ''), '1970-01-01'),
                 }
                 contacts.append(contact)
 
