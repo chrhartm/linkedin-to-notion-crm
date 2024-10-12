@@ -1,23 +1,24 @@
 from notion_client import Client
 from datetime import datetime, timedelta
 import logging
+import os
 
 class NotionManager:
-    def __init__(self, token, page_id):
-        self.client = Client(auth=token)
-        self.page_id = page_id
-        self.database_id = None
+    def __init__(self):
+        self.client = Client(auth=os.getenv("NOTION_TOKEN"))
+        self.database_id = os.getenv("NOTION_DATABASE_ID")
         self.ensure_database_exists()
 
     def ensure_database_exists(self):
         try:
-            logging.info("Creating a new database.")
-            self.create_database()
+            database = self.client.databases.retrieve(database_id=self.database_id)
+            logging.info(f"Connected to existing database with ID: {self.database_id}")
+            self.update_database_properties(database)
         except Exception as e:
-            logging.error(f"Error while creating database: {str(e)}")
-            raise
+            logging.error(f"Error connecting to database: {str(e)}")
+            raise ValueError(f"Failed to connect to database. Error: {str(e)}")
 
-    def create_database(self):
+    def update_database_properties(self, database):
         properties = {
             "Name": {"title": {}},
             "Email": {"email": {}},
@@ -38,15 +39,14 @@ class NotionManager:
         }
 
         try:
-            new_database = self.client.databases.create(
-                parent={"type": "page_id", "page_id": self.page_id},
-                title=[{"type": "text", "text": {"content": "CRM Contacts"}}],
+            self.client.databases.update(
+                database_id=self.database_id,
                 properties=properties
             )
-            self.database_id = new_database["id"]
-            logging.info(f"New database created with ID: {self.database_id}")
+            logging.info(f"Updated database properties for database ID: {self.database_id}")
         except Exception as e:
-            raise ValueError(f"Failed to create database. Error: {str(e)}")
+            logging.error(f"Error updating database properties: {str(e)}")
+            raise ValueError(f"Failed to update database properties. Error: {str(e)}")
 
     def add_contact(self, contact):
         properties = {
@@ -114,21 +114,29 @@ class NotionManager:
 
         for contact in contacts:
             properties = contact.get("properties", {})
-            last_contacted = properties.get("Last Contacted", {}).get("date", {}).get("start")
-            schedule = properties.get("Contact Schedule", {}).get("select", {}).get("name")
+            last_contacted = properties.get("Last Contacted", {}).get("date", {})
+            schedule = properties.get("Contact Schedule", {}).get("select", {})
             
-            if last_contacted:
-                last_contacted = datetime.strptime(last_contacted, "%Y-%m-%d").date()
-                days_since_contact = (today - last_contacted).days
+            if last_contacted and schedule:
+                last_contacted_date = last_contacted.get("start")
+                schedule_name = schedule.get("name")
 
-                overdue = False
-                if schedule == "Weekly" and days_since_contact > 7:
-                    overdue = True
-                elif schedule == "Monthly" and days_since_contact > 30:
-                    overdue = True
-                elif schedule == "Quarterly" and days_since_contact > 90:
-                    overdue = True
-                elif schedule == "Yearly" and days_since_contact > 365:
-                    overdue = True
+                if last_contacted_date and schedule_name:
+                    last_contacted_date = datetime.strptime(last_contacted_date, "%Y-%m-%d").date()
+                    days_since_contact = (today - last_contacted_date).days
 
-                self.update_contact(contact["id"], {"Overdue": overdue})
+                    overdue = False
+                    if schedule_name == "Weekly" and days_since_contact > 7:
+                        overdue = True
+                    elif schedule_name == "Monthly" and days_since_contact > 30:
+                        overdue = True
+                    elif schedule_name == "Quarterly" and days_since_contact > 90:
+                        overdue = True
+                    elif schedule_name == "Yearly" and days_since_contact > 365:
+                        overdue = True
+
+                    self.update_contact(contact["id"], {"Overdue": overdue})
+                else:
+                    logging.warning(f"Skipping contact {contact['id']} due to missing last contacted date or schedule")
+            else:
+                logging.warning(f"Skipping contact {contact['id']} due to missing properties")

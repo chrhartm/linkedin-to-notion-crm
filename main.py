@@ -12,13 +12,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 def main():
     try:
         load_dotenv()
-        notion_token = os.getenv("NOTION_TOKEN")
-        notion_page_id = os.getenv("NOTION_PAGE_ID")
 
-        if not notion_token or not notion_page_id:
-            raise ValueError("NOTION_TOKEN and NOTION_PAGE_ID must be set in the environment variables")
+        if not os.getenv("NOTION_TOKEN") or not os.getenv("NOTION_DATABASE_ID"):
+            raise ValueError("NOTION_TOKEN and NOTION_DATABASE_ID must be set in the environment variables")
 
-        notion_manager = NotionManager(notion_token, notion_page_id)
+        notion_manager = NotionManager()
         linkedin_parser = LinkedInParser()
         contact_manager = ContactManager(notion_manager, linkedin_parser)
         cli = CLI(contact_manager)
@@ -45,7 +43,7 @@ def main():
     except ValueError as ve:
         logging.error(f"Configuration error: {str(ve)}")
         print(f"Configuration error: {str(ve)}")
-        print("Please make sure you've set the NOTION_TOKEN and NOTION_PAGE_ID environment variables.")
+        print("Please make sure you've set the NOTION_TOKEN and NOTION_DATABASE_ID environment variables.")
     except Exception as e:
         logging.error(f"An unexpected error occurred: {str(e)}")
         print(f"An unexpected error occurred: {str(e)}")
