@@ -43,7 +43,7 @@ class NotionManager:
             "Last Contacted": {"date": {}},
             "Contact Schedule": {"select": {
                 "options": [
-                    {"name": "never", "color": "gray"},
+                    {"name": "Never", "color": "gray"},
                     {"name": "Weekly", "color": "blue"},
                     {"name": "Monthly", "color": "green"},
                     {"name": "Quarterly", "color": "yellow"},
@@ -92,7 +92,7 @@ class NotionManager:
                 "Industry": {"select": {"name": contact["Industry"]}},
                 "Field of Work": {"select": {"name": contact["Field of Work"]}},
                 "Last Contacted": {"date": {"start": contact["Last Contacted"]}},
-                "Contact Schedule": {"select": {"name": "never"}},
+                "Contact Schedule": {"select": {"name": "Never"}},
                 "Overdue": {"checkbox": False}
             }
             self.client.pages.create(parent={"database_id": self.database_id}, properties=properties)
@@ -146,7 +146,7 @@ class NotionManager:
                     last_contacted_date = datetime.fromisoformat(last_contacted)
                     current_date = datetime.now()
                     
-                    if contact_schedule == "never":
+                    if contact_schedule == "Never":
                         overdue = False
                     elif contact_schedule == "Weekly":
                         overdue = (current_date - last_contacted_date) > timedelta(weeks=1)
