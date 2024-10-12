@@ -50,16 +50,7 @@ class NotionManager:
                     {"name": "Yearly", "color": "red"}
                 ]
             }},
-            "Overdue": {"formula": {
-                "expression": """
-                if(prop("Contact Schedule") == "Never", false,
-                   if(prop("Contact Schedule") == "Weekly", dateBetween(prop("Last Contacted"), now(), "weeks") > 1,
-                   if(prop("Contact Schedule") == "Monthly", dateBetween(prop("Last Contacted"), now(), "months") > 1,
-                   if(prop("Contact Schedule") == "Quarterly", dateBetween(prop("Last Contacted"), now(), "quarters") > 1,
-                   if(prop("Contact Schedule") == "Yearly", dateBetween(prop("Last Contacted"), now(), "years") > 1,
-                   false)))))
-                """
-            }},
+            "Overdue": {"formula": {"expression": "now() > prop(\"Last Contacted\")"}},
             "Email": {"email": {}},
             "Tags": {"multi_select": {
                 "options": [
