@@ -51,14 +51,7 @@ class NotionManager:
                 ]
             }},
             'Overdue': {'formula': {
-                'expression': '''
-                if(prop("Contact Schedule") == "Never", false,
-                if(prop("Contact Schedule") == "Weekly", dateBetween(prop("Last Contacted"), now(), "days") > 7,
-                if(prop("Contact Schedule") == "Monthly", dateBetween(prop("Last Contacted"), now(), "days") > 30,
-                if(prop("Contact Schedule") == "Quarterly", dateBetween(prop("Last Contacted"), now(), "days") > 90,
-                if(prop("Contact Schedule") == "Yearly", dateBetween(prop("Last Contacted"), now(), "days") > 365,
-                false)))))
-                '''
+                'expression': 'dateBetween(prop("Last Contacted"), now(), "days") > 30'
             }},
             "Email": {"email": {}},
             "Tags": {"multi_select": {
