@@ -1,5 +1,6 @@
 from notion_client import Client
 from datetime import datetime, timedelta
+import logging
 
 class NotionManager:
     def __init__(self, token, page_id):
@@ -10,7 +11,6 @@ class NotionManager:
 
     def ensure_database_exists(self):
         try:
-            # Try to find an existing database within the specified page
             search_results = self.client.search(
                 query="CRM Contacts",
                 filter={
@@ -25,12 +25,12 @@ class NotionManager:
 
             if search_results:
                 self.database_id = search_results[0]["id"]
-                print(f"Connected to existing database with ID: {self.database_id}")
+                logging.info(f"Connected to existing database with ID: {self.database_id}")
             else:
-                print("Database not found. Creating a new one.")
+                logging.info("Database not found. Creating a new one.")
                 self.create_database()
         except Exception as e:
-            print(f"Error while checking for existing database: {str(e)}")
+            logging.error(f"Error while checking for existing database: {str(e)}")
             self.create_database()
 
     def create_database(self):
@@ -60,7 +60,7 @@ class NotionManager:
                 properties=properties
             )
             self.database_id = new_database["id"]
-            print(f"New database created with ID: {self.database_id}")
+            logging.info(f"New database created with ID: {self.database_id}")
         except Exception as e:
             raise ValueError(f"Failed to create database. Error: {str(e)}")
 
@@ -105,9 +105,11 @@ class NotionManager:
     def get_all_contacts(self):
         try:
             results = self.client.databases.query(database_id=self.database_id)
-            return results.get("results", [])
+            contacts = results.get("results", [])
+            logging.info(f"Retrieved {len(contacts)} contacts from the database")
+            return contacts
         except Exception as e:
-            print(f"Error fetching contacts: {str(e)}")
+            logging.error(f"Error fetching contacts: {str(e)}")
             return []
 
     def update_overdue_status(self):

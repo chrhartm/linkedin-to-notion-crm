@@ -1,5 +1,6 @@
 import cmd
 import json
+import logging
 
 class CLI(cmd.Cmd):
     intro = "Welcome to the Personal CRM CLI. Type 'help' to list commands."
@@ -41,16 +42,33 @@ class CLI(cmd.Cmd):
             print("No contacts found in the database.")
             return
         for contact in contacts:
-            properties = contact.get('properties', {})
-            name = properties.get('Name', {}).get('title', [{}])[0].get('text', {}).get('content', 'N/A')
-            email = properties.get('Email', {}).get('email', 'N/A')
-            company = properties.get('Company', {}).get('rich_text', [{}])[0].get('text', {}).get('content', 'N/A')
-            overdue = properties.get('Overdue', {}).get('checkbox', False)
-            print(f"Name: {name}")
-            print(f"Email: {email}")
-            print(f"Company: {company}")
-            print(f"Overdue: {overdue}")
-            print("---")
+            try:
+                properties = contact.get('properties', {})
+                print(f"Contact ID: {contact.get('id', 'N/A')}")
+                for prop_name, prop_value in properties.items():
+                    print(f"{prop_name}: {self._format_property(prop_value)}")
+                print("---")
+            except Exception as e:
+                logging.error(f"Error processing contact: {str(e)}")
+                print(f"Error processing a contact: {str(e)}. Please check the logs for more information.")
+
+    def _format_property(self, prop):
+        if isinstance(prop, dict):
+            if 'title' in prop:
+                return prop['title'][0]['text']['content'] if prop['title'] else 'N/A'
+            elif 'rich_text' in prop:
+                return prop['rich_text'][0]['text']['content'] if prop['rich_text'] else 'N/A'
+            elif 'select' in prop:
+                return prop['select']['name'] if prop['select'] else 'N/A'
+            elif 'email' in prop:
+                return prop['email']
+            elif 'phone_number' in prop:
+                return prop['phone_number']
+            elif 'checkbox' in prop:
+                return 'Yes' if prop['checkbox'] else 'No'
+            elif 'date' in prop:
+                return prop['date']['start'] if prop['date'] else 'N/A'
+        return str(prop)
 
     def do_quit(self, arg):
         "Exit the CLI"
