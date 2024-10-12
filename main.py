@@ -28,8 +28,12 @@ def main():
 
         logging.info("Personal CRM application started")
         
+        # Print database properties
+        print("\nCurrent Database Properties:")
+        notion_manager.print_database_properties()
+        
         # Print available commands
-        print("Available commands:")
+        print("\nAvailable commands:")
         print("  sync <linkedin_export_path> - Sync LinkedIn contacts to Notion database")
         print("  update_contact <page_id> <json_updates> - Update a specific contact")
         print("  list_contacts - List all contacts in the Notion database")
@@ -37,6 +41,7 @@ def main():
         print("  search_contacts <query> - Search contacts by name or company")
         print("  list_overdue - List all overdue contacts")
         print("  update_last_contacted <page_id> <date> - Update the last contacted date for a contact")
+        print("  print_db_properties - Print the current database properties")
         print("  quit - Exit the CLI")
         
         # Run the CLI
