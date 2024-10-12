@@ -1,0 +1,10 @@
+[project]
+name = "repl-nix-notionlinkcrm"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "notion-client>=2.2.1",
+    "pandas>=2.2.3",
+    "python-dotenv>=1.0.1",
+]
