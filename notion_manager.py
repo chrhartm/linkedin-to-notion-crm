@@ -23,7 +23,7 @@ class NotionManager:
             "Name": {"title": {}},
             "LinkedIn URL": {"url": {}},
             "Company": {"rich_text": {}},
-            "Position": {"rich_text": {}},  # 'Position' is right after 'Company'
+            "Position": {"rich_text": {}},
             "Industry": {"select": {
                 "options": [
                     {"name": "Technology", "color": "blue"},
@@ -43,10 +43,14 @@ class NotionManager:
             "Last Contacted": {"date": {}},
             "Contact Schedule": {"select": {
                 "options": [
+                    {"name": "Daily", "color": "red"},
                     {"name": "Weekly", "color": "blue"},
-                    {"name": "Monthly", "color": "green"},
-                    {"name": "Quarterly", "color": "yellow"},
-                    {"name": "Yearly", "color": "red"}
+                    {"name": "Bi-weekly", "color": "green"},
+                    {"name": "Monthly", "color": "yellow"},
+                    {"name": "Quarterly", "color": "orange"},
+                    {"name": "Semi-annually", "color": "purple"},
+                    {"name": "Yearly", "color": "gray"},
+                    {"name": "As needed", "color": "default"}
                 ]
             }},
             "Overdue": {"checkbox": {}},
