@@ -13,18 +13,31 @@ def main():
     try:
         load_dotenv()
 
-        if not os.getenv("NOTION_TOKEN") or not os.getenv("NOTION_DATABASE_ID"):
+        notion_token = os.getenv("NOTION_TOKEN")
+        notion_database_id = os.getenv("NOTION_DATABASE_ID")
+
+        if not notion_token or not notion_database_id:
             raise ValueError("NOTION_TOKEN and NOTION_DATABASE_ID must be set in the environment variables")
 
         notion_manager = NotionManager()
         linkedin_parser = LinkedInParser()
         contact_manager = ContactManager(notion_manager, linkedin_parser)
 
-        # Test syncing contacts
-        contact_manager.sync_contacts("sample_linkedin_export.csv")
-        contact_manager.update_overdue_status()
+        # Ensure the Notion database exists
+        notion_manager.ensure_database_exists()
 
         logging.info("Personal CRM application started")
+        
+        # Print available commands
+        print("Available commands:")
+        print("  sync <linkedin_export_path> - Sync LinkedIn contacts to Notion database")
+        print("  update_contact <page_id> <json_updates> - Update a specific contact")
+        print("  list_contacts - List all contacts in the Notion database")
+        print("  export_contacts <output_file_path> - Export all contacts to a CSV file")
+        print("  search_contacts <query> - Search contacts by name or company")
+        print("  list_overdue - List all overdue contacts")
+        print("  update_last_contacted <page_id> <date> - Update the last contacted date for a contact")
+        print("  quit - Exit the CLI")
         
         # Run the CLI
         cli = CLI(contact_manager)

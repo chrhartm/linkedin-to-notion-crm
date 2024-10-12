@@ -1,6 +1,8 @@
 import cmd
 import json
 import logging
+import csv
+from datetime import datetime
 
 class CLI(cmd.Cmd):
     intro = "Welcome to the Personal CRM CLI. Type 'help' to list commands."
@@ -48,6 +50,108 @@ class CLI(cmd.Cmd):
             except Exception as e:
                 logging.error(f"Error processing contact: {str(e)}")
                 print(f"Error processing a contact: {str(e)}. Please check the logs for more information.")
+
+    def do_export_contacts(self, arg):
+        "Export all contacts to a CSV file: export_contacts <output_file_path>"
+        if not arg:
+            print("Please provide the output file path for the CSV.")
+            return
+        
+        contacts = self.contact_manager.get_all_contacts()
+        if not contacts:
+            print("No contacts found in the database.")
+            return
+
+        try:
+            with open(arg, 'w', newline='') as csvfile:
+                fieldnames = ['Name', 'LinkedIn URL', 'Company', 'Position', 'Industry', 'Field of Work', 'Last Contacted', 'Contact Schedule', 'Overdue']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+
+                for contact in contacts:
+                    properties = contact.get('properties', {})
+                    row = {
+                        'Name': self._format_property(properties.get('Name')),
+                        'LinkedIn URL': self._format_property(properties.get('LinkedIn URL')),
+                        'Company': self._format_property(properties.get('Company')),
+                        'Position': self._format_property(properties.get('Position')),
+                        'Industry': self._format_property(properties.get('Industry')),
+                        'Field of Work': self._format_property(properties.get('Field of Work')),
+                        'Last Contacted': self._format_property(properties.get('Last Contacted')),
+                        'Contact Schedule': self._format_property(properties.get('Contact Schedule')),
+                        'Overdue': self._format_property(properties.get('Overdue'))
+                    }
+                    writer.writerow(row)
+
+            print(f"Contacts exported successfully to {arg}")
+        except Exception as e:
+            logging.error(f"Error exporting contacts: {str(e)}")
+            print(f"Error exporting contacts: {str(e)}. Please check the logs for more information.")
+
+    def do_search_contacts(self, arg):
+        "Search contacts by name or company: search_contacts <query>"
+        if not arg:
+            print("Please provide a search query.")
+            return
+
+        contacts = self.contact_manager.get_all_contacts()
+        results = []
+
+        for contact in contacts:
+            properties = contact.get('properties', {})
+            name = self._format_property(properties.get('Name', '')).lower()
+            company = self._format_property(properties.get('Company', '')).lower()
+            
+            if arg.lower() in name or arg.lower() in company:
+                results.append(contact)
+
+        if not results:
+            print("No matching contacts found.")
+            return
+
+        print(f"Found {len(results)} matching contacts:")
+        for contact in results:
+            properties = contact.get('properties', {})
+            print(f"Name: {self._format_property(properties.get('Name'))}")
+            print(f"Company: {self._format_property(properties.get('Company'))}")
+            print(f"Position: {self._format_property(properties.get('Position'))}")
+            print("---")
+
+    def do_list_overdue(self, arg):
+        "List all overdue contacts"
+        contacts = self.contact_manager.get_all_contacts()
+        overdue_contacts = [contact for contact in contacts if contact['properties'].get('Overdue', {}).get('checkbox', False)]
+
+        if not overdue_contacts:
+            print("No overdue contacts found.")
+            return
+
+        print(f"Found {len(overdue_contacts)} overdue contacts:")
+        for contact in overdue_contacts:
+            properties = contact.get('properties', {})
+            print(f"Name: {self._format_property(properties.get('Name'))}")
+            print(f"Company: {self._format_property(properties.get('Company'))}")
+            print(f"Last Contacted: {self._format_property(properties.get('Last Contacted'))}")
+            print(f"Contact Schedule: {self._format_property(properties.get('Contact Schedule'))}")
+            print("---")
+
+    def do_update_last_contacted(self, arg):
+        "Update the last contacted date for a contact: update_last_contacted <page_id> <date>"
+        args = arg.split()
+        if len(args) != 2:
+            print("Usage: update_last_contacted <page_id> <date>")
+            return
+
+        page_id, date_str = args
+        try:
+            date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            updates = {"Last Contacted": date.isoformat()}
+            self.contact_manager.update_contact(page_id, updates)
+            print(f"Updated last contacted date for contact {page_id} to {date_str}")
+        except ValueError:
+            print("Invalid date format. Please use YYYY-MM-DD.")
+        except Exception as e:
+            print(f"Error updating contact: {str(e)}")
 
     def _format_property(self, prop):
         if isinstance(prop, dict):
