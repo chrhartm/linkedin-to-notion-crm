@@ -23,22 +23,8 @@ def main():
 
         logging.info("Personal CRM application started")
         
-        # Test commands
-        test_commands = [
-            "help",
-            "sync sample_linkedin_export.csv",
-            "list_contacts",
-            "update_overdue",
-            "quit"
-        ]
-        
-        for cmd in test_commands:
-            print(f"\nExecuting command: {cmd}")
-            try:
-                cli.onecmd(cmd)
-            except Exception as e:
-                logging.error(f"Error executing command '{cmd}': {str(e)}")
-                print(f"Error executing command '{cmd}': {str(e)}")
+        # Run the CLI
+        cli.cmdloop()
 
     except ValueError as ve:
         logging.error(f"Configuration error: {str(ve)}")

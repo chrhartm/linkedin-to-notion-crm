@@ -7,4 +7,5 @@ dependencies = [
     "notion-client>=2.2.1",
     "pandas>=2.2.3",
     "python-dotenv>=1.0.1",
+    "schedule>=1.2.2",
 ]

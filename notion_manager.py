@@ -21,10 +21,10 @@ class NotionManager:
     def update_database_properties(self, database):
         properties = {
             "Name": {"title": {}},
-            "Email": {"email": {}},
-            "Phone": {"phone_number": {}},
+            "LinkedIn URL": {"url": {}},
             "Company": {"rich_text": {}},
             "Position": {"rich_text": {}},
+            "Industry": {"select": {}},
             "Field of Work": {"select": {}},
             "Last Contacted": {"date": {}},
             "Contact Schedule": {"select": {
@@ -51,10 +51,10 @@ class NotionManager:
     def add_contact(self, contact):
         properties = {
             "Name": {"title": [{"text": {"content": contact.get("Name", "")}}]},
-            "Email": {"email": contact.get("Email", "")},
-            "Phone": {"phone_number": contact.get("Phone", "")},
+            "LinkedIn URL": {"url": contact.get("LinkedIn URL", "")},
             "Company": {"rich_text": [{"text": {"content": contact.get("Company", "")}}]},
             "Position": {"rich_text": [{"text": {"content": contact.get("Position", "")}}]},
+            "Industry": {"select": {"name": contact.get("Industry", "Unknown")}},
             "Field of Work": {"select": {"name": contact.get("Field of Work", "Unknown")}},
             "Last Contacted": {"date": {"start": contact.get("Last Contacted", "1970-01-01")}},
             "Contact Schedule": {"select": {"name": contact.get("Contact Schedule", "Monthly")}},
@@ -76,13 +76,11 @@ class NotionManager:
         for key, value in updates.items():
             if key == "Name":
                 properties[key] = {"title": [{"text": {"content": value}}]}
-            elif key == "Email":
-                properties[key] = {"email": value}
-            elif key == "Phone":
-                properties[key] = {"phone_number": value}
+            elif key == "LinkedIn URL":
+                properties[key] = {"url": value}
             elif key in ["Company", "Position"]:
                 properties[key] = {"rich_text": [{"text": {"content": value}}]}
-            elif key == "Field of Work":
+            elif key in ["Industry", "Field of Work"]:
                 properties[key] = {"select": {"name": value}}
             elif key == "Last Contacted":
                 properties[key] = {"date": {"start": value}}

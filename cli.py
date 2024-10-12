@@ -16,9 +16,6 @@ class CLI(cmd.Cmd):
             print("Please provide the path to the LinkedIn export file.")
             return
         self.contact_manager.sync_contacts(arg)
-
-    def do_update_overdue(self, arg):
-        "Update overdue status for all contacts"
         self.contact_manager.update_overdue_status()
 
     def do_update_contact(self, arg):
@@ -60,10 +57,8 @@ class CLI(cmd.Cmd):
                 return prop['rich_text'][0]['text']['content'] if prop['rich_text'] else 'N/A'
             elif 'select' in prop:
                 return prop['select']['name'] if prop['select'] else 'N/A'
-            elif 'email' in prop:
-                return prop['email']
-            elif 'phone_number' in prop:
-                return prop['phone_number']
+            elif 'url' in prop:
+                return prop['url']
             elif 'checkbox' in prop:
                 return 'Yes' if prop['checkbox'] else 'No'
             elif 'date' in prop:
@@ -78,6 +73,3 @@ class CLI(cmd.Cmd):
     def default(self, line):
         print(f"Command not recognized: {line}")
         return cmd.Cmd.default(self, line)
-
-    def run(self):
-        self.cmdloop()

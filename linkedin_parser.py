@@ -11,11 +11,11 @@ class LinkedInParser:
             for _, row in df.iterrows():
                 contact = {
                     "Name": f"{row['First Name']} {row['Last Name']}".strip(),
-                    "Email": row.get("Email Address", ""),
-                    "Phone": row.get("Phone Numbers", ""),
+                    "LinkedIn URL": row.get("Profile URL", ""),
                     "Company": row.get("Company", ""),
                     "Position": row.get("Position", ""),
-                    "Field of Work": row.get("Industry", "Unknown"),
+                    "Industry": row.get("Industry", "Unknown"),
+                    "Field of Work": row.get("Field of Work", "Unknown"),
                     "Last Contacted": row.get("Last Date of Contact", "1970-01-01"),
                     "Contact Schedule": "Monthly",  # Set a default schedule
                 }
