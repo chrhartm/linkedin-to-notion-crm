@@ -50,7 +50,16 @@ class NotionManager:
                     {"name": "Yearly", "color": "red"}
                 ]
             }},
-            "Overdue": {"formula": {"expression": "now() > prop(\"Last Contacted\")"}},
+            "Overdue": {"formula": {
+                "expression": """
+                if(prop("Contact Schedule") == "Never", false,
+                if(prop("Contact Schedule") == "Weekly", dateBetween(prop("Last Contacted"), now(), "weeks") > 1,
+                if(prop("Contact Schedule") == "Monthly", dateBetween(prop("Last Contacted"), now(), "months") > 1,
+                if(prop("Contact Schedule") == "Quarterly", dateBetween(prop("Last Contacted"), now(), "quarters") > 1,
+                if(prop("Contact Schedule") == "Yearly", dateBetween(prop("Last Contacted"), now(), "years") > 1,
+                false)))))
+                """
+            }},
             "Email": {"email": {}},
             "Tags": {"multi_select": {
                 "options": [
@@ -92,7 +101,7 @@ class NotionManager:
                 "Industry": {"select": {"name": contact["Industry"]}},
                 "Field of Work": {"select": {"name": contact["Field of Work"]}},
                 "Last Contacted": {"date": {"start": contact["Last Contacted"]}},
-                "Contact Schedule": {"select": {"name": "Never"}},
+                "Contact Schedule": {"select": {"name": contact["Contact Schedule"]}},
             }
             self.client.pages.create(parent={"database_id": self.database_id}, properties=properties)
             logging.info(f"Added contact: {contact['Name']}")
