@@ -23,7 +23,7 @@ class NotionManager:
             "Name": {"title": {}},
             "LinkedIn URL": {"url": {}},
             "Company": {"rich_text": {}},
-            "Position": {"rich_text": {}},  # Moved 'Position' right after 'Company'
+            "Position": {"rich_text": {}},  # 'Position' is right after 'Company'
             "Industry": {"select": {
                 "options": [
                     {"name": "Technology", "color": "blue"},
@@ -51,7 +51,6 @@ class NotionManager:
             }},
             "Overdue": {"checkbox": {}},
             "Email": {"email": {}},
-            "Phone": {"phone_number": {}},
             "Tags": {"multi_select": {
                 "options": [
                     {"name": "Important", "color": "red"},
@@ -70,5 +69,16 @@ class NotionManager:
         except Exception as e:
             logging.error(f"Error updating database properties: {str(e)}")
             raise ValueError(f"Failed to update database properties. Error: {str(e)}")
+
+    def print_database_properties(self):
+        try:
+            database = self.client.databases.retrieve(database_id=self.database_id)
+            properties = database.get('properties', {})
+            print("Database Properties:")
+            for key, value in properties.items():
+                print(f"- {key}: {value['type']}")
+        except Exception as e:
+            logging.error(f"Error retrieving database properties: {str(e)}")
+            print(f"Error retrieving database properties: {str(e)}")
 
     # Rest of the class implementation remains unchanged
