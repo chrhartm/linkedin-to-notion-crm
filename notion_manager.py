@@ -103,16 +103,21 @@ class NotionManager:
         self.client.pages.update(page_id=page_id, properties=properties)
 
     def get_all_contacts(self):
-        results = self.client.databases.query(database_id=self.database_id)
-        return results["results"]
+        try:
+            results = self.client.databases.query(database_id=self.database_id)
+            return results.get("results", [])
+        except Exception as e:
+            print(f"Error fetching contacts: {str(e)}")
+            return []
 
     def update_overdue_status(self):
         contacts = self.get_all_contacts()
         today = datetime.now().date()
 
         for contact in contacts:
-            last_contacted = contact["properties"]["Last Contacted"]["date"]["start"]
-            schedule = contact["properties"]["Contact Schedule"]["select"]["name"]
+            properties = contact.get("properties", {})
+            last_contacted = properties.get("Last Contacted", {}).get("date", {}).get("start")
+            schedule = properties.get("Contact Schedule", {}).get("select", {}).get("name")
             
             if last_contacted:
                 last_contacted = datetime.strptime(last_contacted, "%Y-%m-%d").date()

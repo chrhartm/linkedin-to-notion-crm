@@ -37,11 +37,19 @@ class CLI(cmd.Cmd):
     def do_list_contacts(self, arg):
         "List all contacts in the Notion database"
         contacts = self.contact_manager.get_all_contacts()
+        if not contacts:
+            print("No contacts found in the database.")
+            return
         for contact in contacts:
-            print(f"Name: {contact['properties']['Name']['title'][0]['text']['content']}")
-            print(f"Email: {contact['properties']['Email']['email']}")
-            print(f"Company: {contact['properties']['Company']['rich_text'][0]['text']['content']}")
-            print(f"Overdue: {contact['properties']['Overdue']['checkbox']}")
+            properties = contact.get('properties', {})
+            name = properties.get('Name', {}).get('title', [{}])[0].get('text', {}).get('content', 'N/A')
+            email = properties.get('Email', {}).get('email', 'N/A')
+            company = properties.get('Company', {}).get('rich_text', [{}])[0].get('text', {}).get('content', 'N/A')
+            overdue = properties.get('Overdue', {}).get('checkbox', False)
+            print(f"Name: {name}")
+            print(f"Email: {email}")
+            print(f"Company: {company}")
+            print(f"Overdue: {overdue}")
             print("---")
 
     def do_quit(self, arg):
