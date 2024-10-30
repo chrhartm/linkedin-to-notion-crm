@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Personal CRM</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Personal CRM</h1>
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Sync LinkedIn Contacts</h5>
+                <form action="/sync" method="post" enctype="multipart/form-data" class="mb-4">
+                    <div class="mb-3">
+                        <label for="notion_token" class="form-label">Notion Token</label>
+                        <input type="password" class="form-control" id="notion_token" name="notion_token" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="notion_database_id" class="form-label">Notion Database ID</label>
+                        <input type="text" class="form-control" id="notion_database_id" name="notion_database_id" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="linkedin_file" class="form-label">LinkedIn Contacts CSV</label>
+                        <input type="file" class="form-control" id="linkedin_file" name="linkedin_file" accept=".csv" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Sync Contacts</button>
+                </form>
+            </div>
+        </div>
+
+        {% if message %}
+        <div class="alert {% if error %}alert-danger{% else %}alert-success{% endif %} mt-3">
+            {{ message }}
+        </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
