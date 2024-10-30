@@ -5,6 +5,20 @@ class ContactManager:
         self.notion_manager = notion_manager
         self.linkedin_parser = linkedin_parser
 
+    def _is_valid_contact(self, contact):
+        """Check if the contact has any meaningful data."""
+        required_fields = ['Name', 'Company', 'Position', 'LinkedIn URL']
+        has_valid_data = any(
+            contact.get(field) and str(contact.get(field)).strip()
+            for field in required_fields
+        )
+        
+        if not has_valid_data:
+            field_values = {field: contact.get(field, 'N/A') for field in required_fields}
+            logging.info(f"Skipping empty contact with fields: {field_values}")
+        
+        return has_valid_data
+
     def sync_contacts(self, linkedin_export_path):
         try:
             # Parse LinkedIn contacts
@@ -24,10 +38,15 @@ class ContactManager:
             
             # Track sync errors
             sync_errors = []
+            skipped_contacts = 0
 
             # Sync LinkedIn contacts to Notion database
             for contact in linkedin_contacts:
                 try:
+                    if not self._is_valid_contact(contact):
+                        skipped_contacts += 1
+                        continue
+
                     self._process_single_contact(contact, existing_contacts)
                 except Exception as e:
                     error_msg = f"Error syncing contact {contact.get('Name', 'Unknown')}: {str(e)}"
@@ -38,7 +57,7 @@ class ContactManager:
                 error_summary = "\n".join(sync_errors)
                 raise Exception(f"Encountered errors while syncing contacts:\n{error_summary}")
 
-            logging.info(f"Synced {len(linkedin_contacts)} contacts to Notion database.")
+            logging.info(f"Synced {len(linkedin_contacts) - skipped_contacts} contacts to Notion database. Skipped {skipped_contacts} empty contacts.")
         except Exception as e:
             logging.error(f"Error syncing contacts: {str(e)}")
             raise
