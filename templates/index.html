@@ -93,6 +93,11 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        const MAX_POLLING_TIME = 300000; // 5 minutes in milliseconds
+        const POLLING_INTERVAL = 1000; // 1 second
+        let pollingStartTime;
+        let progressCheckInterval;
+
         document.getElementById('syncForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
@@ -102,7 +107,8 @@
             const statusText = document.getElementById('syncStatus');
             const syncButton = document.getElementById('syncButton');
             
-            // Show progress section and disable submit button
+            // Reset and show progress section
+            resetProgress();
             progressSection.style.display = 'block';
             syncButton.disabled = true;
             
@@ -111,63 +117,112 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.status === 'success') {
-                    // Start polling for progress
+                    pollingStartTime = Date.now();
                     pollProgress();
                 } else {
-                    throw new Error(data.message);
+                    throw new Error(data.message || 'Unknown error occurred');
                 }
             })
             .catch(error => {
-                statusText.textContent = `Error: ${error.message}`;
-                statusText.className = 'text-danger';
-                syncButton.disabled = false;
+                handleError(error.message);
             });
         });
 
+        function resetProgress() {
+            const progressBar = document.getElementById('syncProgress');
+            const statusText = document.getElementById('syncStatus');
+            
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            progressBar.classList.remove('bg-danger');
+            progressBar.classList.add('bg-primary');
+            statusText.className = 'text-muted';
+            statusText.textContent = 'Starting sync process...';
+            
+            if (progressCheckInterval) {
+                clearInterval(progressCheckInterval);
+            }
+        }
+
         function pollProgress() {
+            if (progressCheckInterval) {
+                clearInterval(progressCheckInterval);
+            }
+
+            progressCheckInterval = setInterval(() => {
+                // Check if we've exceeded the maximum polling time
+                if (Date.now() - pollingStartTime > MAX_POLLING_TIME) {
+                    handleError('Sync operation timed out');
+                    clearInterval(progressCheckInterval);
+                    return;
+                }
+
+                fetch('/sync/progress')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(handleProgressUpdate)
+                    .catch(error => {
+                        handleError(error.message);
+                        clearInterval(progressCheckInterval);
+                    });
+            }, POLLING_INTERVAL);
+        }
+
+        function handleProgressUpdate(data) {
             const progressBar = document.getElementById('syncProgress');
             const statusText = document.getElementById('syncStatus');
             const syncButton = document.getElementById('syncButton');
 
-            const checkProgress = () => {
-                fetch('/sync/progress')
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.total > 0) {
-                            const percentage = Math.round((data.current / data.total) * 100);
-                            progressBar.style.width = `${percentage}%`;
-                            progressBar.textContent = `${percentage}%`;
-                            progressBar.setAttribute('aria-valuenow', percentage);
-                            
-                            statusText.textContent = `Processing: ${data.current} of ${data.total} contacts`;
+            if (data.error) {
+                handleError(data.error);
+                return;
+            }
 
-                            if (data.status === 'completed') {
-                                statusText.textContent = 'Sync completed successfully!';
-                                statusText.className = 'text-success';
-                                syncButton.disabled = false;
-                                return;
-                            } else if (data.status === 'error') {
-                                statusText.textContent = 'Error occurred during sync';
-                                statusText.className = 'text-danger';
-                                syncButton.disabled = false;
-                                return;
-                            }
-                        }
-                        
-                        // Continue polling if not completed or error
-                        setTimeout(checkProgress, 1000);
-                    })
-                    .catch(error => {
-                        statusText.textContent = `Error: ${error.message}`;
-                        statusText.className = 'text-danger';
-                        syncButton.disabled = false;
-                    });
-            };
+            if (data.total > 0) {
+                const percentage = Math.round((data.current / data.total) * 100);
+                progressBar.style.width = `${percentage}%`;
+                progressBar.textContent = `${percentage}%`;
+                progressBar.setAttribute('aria-valuenow', percentage);
+                
+                statusText.textContent = `Processing: ${data.current} of ${data.total} contacts`;
 
-            checkProgress();
+                if (data.status === 'completed') {
+                    clearInterval(progressCheckInterval);
+                    statusText.textContent = 'Sync completed successfully!';
+                    statusText.className = 'text-success';
+                    syncButton.disabled = false;
+                } else if (data.status === 'error') {
+                    handleError('Error occurred during sync');
+                }
+            }
+        }
+
+        function handleError(message) {
+            const progressBar = document.getElementById('syncProgress');
+            const statusText = document.getElementById('syncStatus');
+            const syncButton = document.getElementById('syncButton');
+
+            progressBar.classList.remove('bg-primary');
+            progressBar.classList.add('bg-danger');
+            statusText.className = 'text-danger';
+            statusText.textContent = `Error: ${message}`;
+            syncButton.disabled = false;
+
+            if (progressCheckInterval) {
+                clearInterval(progressCheckInterval);
+            }
         }
     </script>
 </body>
