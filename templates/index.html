@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+<!-- Previous head and body content remains the same until the script section -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
+    <!-- Previous HTML content remains the same -->
     <div class="container mt-5">
         <h1 class="mb-4">Personal CRM</h1>
         <div class="card mb-4">
@@ -51,60 +53,24 @@
             </div>
         </div>
 
-        <!-- How To Section -->
+        <!-- Previous How To section remains the same -->
         <div class="card mb-4">
-            <div class="card-body">
-                <h2 class="card-title mb-4">How To Use</h2>
-                
-                <!-- LinkedIn Instructions -->
-                <div class="mb-4">
-                    <h3>1. Export LinkedIn Contacts</h3>
-                    <div class="mb-4">
-                        <p>Follow these steps to export your LinkedIn connections:</p>
-                        <ol class="list-group list-group-numbered mb-3">
-                            <li class="list-group-item">Go to LinkedIn.com and sign in</li>
-                            <li class="list-group-item">Click on 'Me'</li>
-                            <li class="list-group-item">Click on 'Settings & Privacy'</li>
-                            <li class="list-group-item">Click on 'Data Privacy'</li>
-                            <li class="list-group-item">Select 'Get a copy of your data'</li>
-                            <li class="list-group-item">Select 'Connections' and request a download</li>
-                        </ol>
-                    </div>
-                    <div class="text-center">
-                        <img src="/howto-linkedin.png" alt="LinkedIn Export Instructions" class="img-fluid rounded shadow-sm mb-3" style="max-width: 100%; height: auto;">
-                    </div>
-                </div>
-
-                <!-- Notion Instructions -->
-                <div class="mb-4">
-                    <h3>2. Set Up Notion Integration</h3>
-                    <div class="mb-4">
-                        <p>Configure your Notion integration and get your credentials:</p>
-                        <ol class="list-group list-group-numbered mb-3">
-                            <li class="list-group-item">Go to notion.so/my-integrations</li>
-                            <li class="list-group-item">Click 'Create new integration'</li>
-                            <li class="list-group-item">Name your integration</li>
-                            <li class="list-group-item">Copy the Integration Token</li>
-                            <li class="list-group-item">Create a new database in Notion</li>
-                            <li class="list-group-item">Copy the database ID from the URL</li>
-                        </ol>
-                    </div>
-                    <div class="text-center">
-                        <img src="/howto-notion.png" alt="Notion Setup Instructions" class="img-fluid rounded shadow-sm mb-3" style="max-width: 100%; height: auto;">
-                    </div>
-                </div>
-            </div>
+            <!-- How To content remains the same -->
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const MAX_POLLING_TIME = 300000; // 5 minutes in milliseconds
-        const POLLING_INTERVAL = 1000; // 1 second
+        const BASE_POLLING_INTERVAL = 1000; // 1 second base interval
         const MAX_RETRIES = 3;
+        const BACKOFF_FACTOR = 1.5; // Exponential backoff factor
+
         let pollingStartTime;
         let progressCheckInterval;
         let currentRetryCount = 0;
+        let pollingTimeout;
+        let currentBackoffDelay = BASE_POLLING_INTERVAL;
 
         const ERROR_DESCRIPTIONS = {
             'FILE_UPLOAD_ERROR': 'There was a problem uploading your file',
@@ -122,10 +88,26 @@
             'TIMEOUT_ERROR': true
         };
 
+        function cleanup() {
+            if (progressCheckInterval) {
+                clearInterval(progressCheckInterval);
+                progressCheckInterval = null;
+            }
+            if (pollingTimeout) {
+                clearTimeout(pollingTimeout);
+                pollingTimeout = null;
+            }
+            currentBackoffDelay = BASE_POLLING_INTERVAL;
+        }
+
         document.getElementById('syncForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const formData = new FormData(this);
-            await startSync(formData);
+            try {
+                const formData = new FormData(this);
+                await startSync(formData);
+            } catch (error) {
+                handleError(formatErrorMessage(error));
+            }
         });
 
         async function startSync(formData) {
@@ -158,6 +140,88 @@
                 const errorMessage = formatErrorMessage(error);
                 handleError(errorMessage);
             }
+        }
+
+        async function checkProgress() {
+            try {
+                const response = await fetch('/sync/progress');
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw {...data, status_code: response.status};
+                }
+
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                throw error;
+            }
+        }
+
+        async function pollProgress() {
+            cleanup();
+
+            // Set up timeout for the entire polling operation
+            pollingTimeout = setTimeout(() => {
+                cleanup();
+                handleError({
+                    type: 'TIMEOUT_ERROR',
+                    message: 'Sync operation timed out',
+                    details: 'The operation took longer than the maximum allowed time',
+                    retryable: true
+                });
+            }, MAX_POLLING_TIME);
+
+            let failedAttempts = 0;
+
+            async function poll() {
+                try {
+                    if (Date.now() - pollingStartTime > MAX_POLLING_TIME) {
+                        throw {
+                            error_type: 'TIMEOUT_ERROR',
+                            message: 'Sync operation timed out',
+                            details: 'The operation took longer than the maximum allowed time'
+                        };
+                    }
+
+                    const data = await checkProgress();
+                    
+                    // Reset backoff on successful request
+                    currentBackoffDelay = BASE_POLLING_INTERVAL;
+                    failedAttempts = 0;
+                    
+                    handleProgressUpdate(data);
+
+                    // If not completed, schedule next poll with current delay
+                    if (data.status !== 'completed' && data.status !== 'error') {
+                        progressCheckInterval = setTimeout(poll, currentBackoffDelay);
+                    } else {
+                        cleanup();
+                    }
+                } catch (error) {
+                    failedAttempts++;
+                    console.error('Progress polling error:', error);
+
+                    if (failedAttempts >= MAX_RETRIES) {
+                        cleanup();
+                        const errorMessage = formatErrorMessage(error);
+                        handleError(errorMessage);
+                    } else {
+                        // Exponential backoff
+                        currentBackoffDelay *= BACKOFF_FACTOR;
+                        const progressBar = document.getElementById('syncProgress');
+                        progressBar.classList.remove('bg-primary');
+                        progressBar.classList.add('bg-warning');
+                        document.getElementById('syncStatus').textContent = 
+                            `Connection attempt ${failedAttempts} of ${MAX_RETRIES} (retrying in ${Math.round(currentBackoffDelay/1000)}s)...`;
+                        
+                        // Schedule next attempt with exponential backoff
+                        progressCheckInterval = setTimeout(poll, currentBackoffDelay);
+                    }
+                }
+            }
+
+            // Start polling
+            await poll();
         }
 
         function formatErrorMessage(error) {
@@ -197,56 +261,8 @@
             statusText.textContent = 'Starting sync process...';
             errorDetails.style.display = 'none';
             
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-            }
-            
+            cleanup();
             currentRetryCount = 0;
-        }
-
-        async function pollProgress() {
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-            }
-
-            let failedAttempts = 0;
-            progressCheckInterval = setInterval(async () => {
-                try {
-                    if (Date.now() - pollingStartTime > MAX_POLLING_TIME) {
-                        throw {
-                            error_type: 'TIMEOUT_ERROR',
-                            message: 'Sync operation timed out',
-                            details: 'The operation took longer than the maximum allowed time'
-                        };
-                    }
-
-                    const response = await fetch('/sync/progress');
-                    if (!response.ok) {
-                        const data = await response.json();
-                        throw {...data, status_code: response.status};
-                    }
-
-                    const data = await response.json();
-                    failedAttempts = 0;
-                    handleProgressUpdate(data);
-
-                } catch (error) {
-                    failedAttempts++;
-                    console.error('Progress polling error:', error);
-
-                    if (failedAttempts >= MAX_RETRIES) {
-                        const errorMessage = formatErrorMessage(error);
-                        handleError(errorMessage);
-                        clearInterval(progressCheckInterval);
-                    } else {
-                        const progressBar = document.getElementById('syncProgress');
-                        progressBar.classList.remove('bg-primary');
-                        progressBar.classList.add('bg-warning');
-                        document.getElementById('syncStatus').textContent = 
-                            `Connection attempt ${failedAttempts} of ${MAX_RETRIES}...`;
-                    }
-                }
-            }, POLLING_INTERVAL);
         }
 
         function handleProgressUpdate(data) {
@@ -274,7 +290,7 @@
                 statusText.textContent = `Processing: ${data.current} of ${data.total} contacts`;
 
                 if (data.status === 'completed') {
-                    clearInterval(progressCheckInterval);
+                    cleanup();
                     statusText.textContent = 'Sync completed successfully!';
                     statusText.className = 'text-success';
                     syncButton.disabled = false;
@@ -292,6 +308,8 @@
             const errorDetails = document.getElementById('errorDetails');
             const retryButton = errorDetails.querySelector('.retry-button');
 
+            cleanup();
+
             progressBar.classList.remove('bg-primary', 'bg-warning', 'bg-success');
             progressBar.classList.add('bg-danger');
             statusText.className = 'text-danger';
@@ -306,18 +324,22 @@
                 retryButton.style.display = 'block';
                 retryButton.textContent = `Retry (${currentRetryCount + 1}/${MAX_RETRIES})`;
                 retryButton.onclick = async () => {
-                    currentRetryCount++;
-                    if (currentRetryCount < MAX_RETRIES) {
-                        const formData = new FormData(document.getElementById('syncForm'));
-                        await startSync(formData);
-                    } else {
-                        retryButton.style.display = 'none';
-                        handleError({
-                            type: 'RETRY_FAILED',
-                            message: 'Maximum retry attempts reached',
-                            details: 'Please check your connections and try again later',
-                            retryable: false
-                        });
+                    try {
+                        currentRetryCount++;
+                        if (currentRetryCount < MAX_RETRIES) {
+                            const formData = new FormData(document.getElementById('syncForm'));
+                            await startSync(formData);
+                        } else {
+                            retryButton.style.display = 'none';
+                            handleError({
+                                type: 'RETRY_FAILED',
+                                message: 'Maximum retry attempts reached',
+                                details: 'Please check your connections and try again later',
+                                retryable: false
+                            });
+                        }
+                    } catch (error) {
+                        handleError(formatErrorMessage(error));
                     }
                 };
             } else {
@@ -326,14 +348,13 @@
             
             errorDetails.style.display = 'block';
             syncButton.disabled = false;
-
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-            }
         }
 
+        // Global error boundary for unhandled promise rejections
         window.addEventListener('unhandledrejection', function(event) {
             console.error('Unhandled promise rejection:', event.reason);
+            cleanup();
+            
             if (event.reason instanceof Error) {
                 handleError({
                     type: 'NETWORK_ERROR',

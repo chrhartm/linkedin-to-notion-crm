@@ -391,6 +391,7 @@ dependencies = [
     { name = "pillow" },
     { name = "python-dotenv" },
     { name = "schedule" },
+    { name = "werkzeug" },
 ]
 
 [package.metadata]
@@ -402,6 +403,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "schedule", specifier = ">=1.2.2" },
+    { name = "werkzeug" },
 ]
 
 [[package]]

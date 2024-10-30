@@ -64,9 +64,9 @@ class NotionManager:
                         {"name": "As Needed", "color": "gray"}
                     ]
                 }},
-                'Overdue': {'formula': {
-                    'expression': 'now() > prop("Last Contacted").dateAdd(ifs(prop("Contact Schedule").equal("Weekly"),7,prop("Contact Schedule").equal("Monthly"),30,prop("Contact Schedule").equal("Quarterly"),90,prop("Contact Schedule").equal("Yearly"),356,9999999999),"days")'
-                }},
+#                'Overdue': {'formula': {
+#                    'expression': 'now() > prop("Last #Contacted").dateAdd(ifs(prop("Contact Schedule").equal("Weekly"),7,prop("Contact #Schedule").equal("Monthly"),30,prop("Contact #Schedule").equal("Quarterly"),90,prop("Contact #Schedule").equal("Yearly"),356,9999999999),"days")'
+#                }},
                 "Email": {"email": {}},
                 "Tags": {"multi_select": {
                     "options": [
