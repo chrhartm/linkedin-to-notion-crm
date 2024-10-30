@@ -62,6 +62,9 @@
                                 <p class="mb-0 error-message"></p>
                                 <small class="error-details"></small>
                             </div>
+                            <button type="button" class="btn btn-sm btn-outline-danger retry-button" style="display: none;">
+                                Retry
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -118,327 +121,158 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Wait for DOM content to be fully loaded before initializing
-        document.addEventListener('DOMContentLoaded', function() {
-            let retryCount = 0;
-            const MAX_RETRIES = 5;
-            const RETRY_DELAY = 2000;
-            let socket = null;
+        // Initialize Socket.IO
+        const socket = io();
+        const connectionStatus = document.getElementById('connectionStatus');
+        const progressSection = document.getElementById('progressSection');
+        const syncProgress = document.getElementById('syncProgress');
+        const syncStatus = document.getElementById('syncStatus');
+        const currentContact = document.getElementById('currentContact');
+        const errorDetails = document.getElementById('errorDetails');
+        const syncForm = document.getElementById('syncForm');
+        const syncButton = document.getElementById('syncButton');
 
-            // Function to initialize UI elements with error handling
-            function initializeUI() {
-                const elements = {};
-                const ids = [
-                    'connectionStatus',
-                    'progressSection',
-                    'syncProgress',
-                    'syncStatus',
-                    'currentContact',
-                    'errorDetails',
-                    'syncForm',
-                    'syncButton',
-                    'socket_id'
-                ];
+        // Socket connection handlers
+        socket.on('connect', () => {
+            document.getElementById('socket_id').value = socket.id;
+            connectionStatus.className = 'alert alert-success';
+            connectionStatus.textContent = 'Connected to server';
+            setTimeout(() => {
+                connectionStatus.style.display = 'none';
+            }, 3000);
+        });
 
-                ids.forEach(id => {
-                    const element = document.getElementById(id);
-                    if (element) {
-                        elements[id] = element;
-                    } else {
-                        console.warn(`Element with id '${id}' not found`);
-                    }
-                });
+        socket.on('disconnect', () => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-warning';
+            connectionStatus.textContent = 'Disconnected from server. Attempting to reconnect...';
+        });
 
-                return elements;
-            }
+        socket.on('error', (error) => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-danger';
+            connectionStatus.textContent = 'Connection error: ' + error;
+        });
 
-            // Initialize UI elements
-            const elements = initializeUI();
-
-            // Function to initialize Socket.IO with retry mechanism
-            function initializeSocket() {
-                try {
-                    if (socket) {
-                        socket.close();
-                        socket = null;
-                    }
-
-                    socket = io({
-                        reconnection: true,
-                        reconnectionAttempts: MAX_RETRIES,
-                        reconnectionDelay: RETRY_DELAY,
-                        reconnectionDelayMax: RETRY_DELAY * 2,
-                        timeout: 20000,
-                        transports: ['polling', 'websocket'],
-                        upgrade: true,
-                        forceNew: true,
-                        path: '/socket.io/'
-                    });
-
-                    setupSocketEventHandlers();
-                    return true;
-                } catch (error) {
-                    console.error('Socket initialization error:', error);
-                    handleConnectionError(error);
-                    return false;
+        // Progress update handler
+        socket.on('sync_progress', (data) => {
+            progressSection.style.display = 'block';
+            
+            if (data.status === 'processing') {
+                syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+                syncProgress.classList.add('bg-primary');
+                
+                if (data.total && data.current) {
+                    const percentage = Math.round((data.current / data.total) * 100);
+                    syncProgress.style.width = `${percentage}%`;
+                    syncProgress.textContent = `${percentage}%`;
+                    syncProgress.setAttribute('aria-valuenow', percentage);
                 }
+                
+                syncStatus.className = 'text-muted mb-2';
+                syncStatus.textContent = data.message || 'Processing...';
+                
+                if (data.contact) {
+                    currentContact.textContent = `Current contact: ${data.contact}`;
+                    currentContact.style.display = 'block';
+                }
+            } else if (data.status === 'completed') {
+                syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-danger');
+                syncProgress.classList.add('bg-success');
+                syncStatus.className = 'text-success mb-2';
+                syncStatus.textContent = data.message || 'Sync completed successfully!';
+                currentContact.style.display = 'none';
+                syncButton.disabled = false;
+                errorDetails.style.display = 'none';
+            } else if (data.status === 'error') {
+                handleError({
+                    type: data.error_type,
+                    message: data.message,
+                    details: data.details
+                });
+            } else if (data.status === 'retrying') {
+                syncProgress.classList.remove('bg-primary', 'bg-success');
+                syncProgress.classList.add('bg-warning');
+                syncStatus.className = 'text-warning mb-2';
+                syncStatus.textContent = data.message;
             }
+        });
 
-            // Function to update connection status
-            function updateConnectionStatus(type, message) {
-                const connectionStatus = elements.connectionStatus;
-                if (!connectionStatus) return;
+        // Form submission handler
+        syncForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            resetProgress();
+            progressSection.style.display = 'block';
+            syncButton.disabled = true;
+            
+            try {
+                const formData = new FormData(syncForm);
+                const response = await fetch('/sync', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (!response.ok) {
+                    throw {...data, status_code: response.status};
+                }
 
-                const statusClasses = {
-                    success: 'alert-success',
-                    warning: 'alert-warning',
-                    error: 'alert-danger',
-                    info: 'alert-info'
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Unknown error occurred');
+                }
+            } catch (error) {
+                handleError(formatErrorMessage(error));
+            }
+        });
+
+        function resetProgress() {
+            syncProgress.style.width = '0%';
+            syncProgress.textContent = '0%';
+            syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-primary');
+            syncStatus.className = 'text-muted mb-2';
+            syncStatus.textContent = 'Starting sync process...';
+            currentContact.style.display = 'none';
+            errorDetails.style.display = 'none';
+        }
+
+        function handleError(error) {
+            syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-danger');
+            syncStatus.className = 'text-danger mb-2';
+            syncStatus.textContent = error.message;
+            
+            errorDetails.querySelector('.alert-heading').textContent = error.type;
+            errorDetails.querySelector('.error-message').textContent = error.message;
+            if (error.details) {
+                errorDetails.querySelector('.error-details').textContent = error.details;
+            }
+            
+            errorDetails.style.display = 'block';
+            syncButton.disabled = false;
+        }
+
+        function formatErrorMessage(error) {
+            if (error.error_type) {
+                return {
+                    type: error.error_type,
+                    message: error.message,
+                    details: error.details
                 };
-
-                connectionStatus.className = `alert ${statusClasses[type] || 'alert-info'}`;
-                connectionStatus.textContent = message;
-                connectionStatus.style.display = 'block';
-
-                if (type === 'success') {
-                    setTimeout(() => {
-                        if (connectionStatus.style) {
-                            connectionStatus.style.display = 'none';
-                        }
-                    }, 3000);
-                }
             }
+            return {
+                type: 'NETWORK_ERROR',
+                message: error.message || 'Network connection error',
+                details: 'Unable to connect to the server'
+            };
+        }
 
-            // Function to handle connection errors
-            function handleConnectionError(error) {
-                console.error('Connection error:', error);
-                if (retryCount < MAX_RETRIES) {
-                    retryCount++;
-                    updateConnectionStatus('warning', `Connection error. Retry attempt ${retryCount}/${MAX_RETRIES}...`);
-                    setTimeout(initializeSocket, RETRY_DELAY);
-                } else {
-                    updateConnectionStatus('error', 'Failed to establish connection after multiple attempts');
-                }
-            }
-
-            // Function to set up socket event handlers
-            function setupSocketEventHandlers() {
-                if (!socket) return;
-
-                socket.on('connect', () => {
-                    retryCount = 0;
-                    const socketIdInput = elements.socket_id;
-                    if (socketIdInput) {
-                        socketIdInput.value = socket.id;
-                    }
-                    updateConnectionStatus('success', 'Connected to server');
-                });
-
-                socket.on('disconnect', () => {
-                    updateConnectionStatus('warning', 'Disconnected from server. Attempting to reconnect...');
-                });
-
-                socket.on('connect_error', handleConnectionError);
-                socket.on('error', handleConnectionError);
-                socket.on('sync_progress', handleSyncProgress);
-            }
-
-            // Function to handle sync progress
-            function handleSyncProgress(data) {
-                const progressSection = elements.progressSection;
-                if (!progressSection) return;
-
-                try {
-                    progressSection.style.display = 'block';
-
-                    if (data.status === 'processing') {
-                        updateProcessingProgress(data);
-                    } else if (data.status === 'completed') {
-                        handleCompletion();
-                    } else if (data.status === 'error') {
-                        handleError(data);
-                    }
-                } catch (error) {
-                    console.error('Error handling sync progress:', error);
-                }
-            }
-
-            // Function to update processing progress
-            function updateProcessingProgress(data) {
-                const { syncProgress, syncStatus, currentContact } = elements;
-                if (!syncProgress || !syncStatus) return;
-
-                try {
-                    syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
-                    syncProgress.classList.add('bg-primary');
-
-                    if (data.total && data.current) {
-                        const percentage = Math.round((data.current / data.total) * 100);
-                        syncProgress.style.width = `${percentage}%`;
-                        syncProgress.textContent = `${percentage}%`;
-                        syncProgress.setAttribute('aria-valuenow', percentage);
-                    }
-
-                    syncStatus.className = 'text-muted mb-2';
-                    syncStatus.textContent = data.message || 'Processing...';
-
-                    if (data.contact && currentContact) {
-                        currentContact.textContent = `Current contact: ${data.contact}`;
-                        currentContact.style.display = 'block';
-                    }
-                } catch (error) {
-                    console.error('Error updating progress:', error);
-                }
-            }
-
-            // Function to handle completion
-            function handleCompletion() {
-                const { syncProgress, syncStatus, currentContact, syncButton, errorDetails } = elements;
-                if (!syncProgress || !syncStatus) return;
-
-                try {
-                    syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-danger');
-                    syncProgress.classList.add('bg-success');
-                    syncStatus.className = 'text-success mb-2';
-                    syncStatus.textContent = 'Sync completed successfully!';
-
-                    if (currentContact) {
-                        currentContact.style.display = 'none';
-                    }
-                    if (syncButton) {
-                        syncButton.disabled = false;
-                    }
-                    if (errorDetails) {
-                        errorDetails.style.display = 'none';
-                    }
-                } catch (error) {
-                    console.error('Error handling completion:', error);
-                }
-            }
-
-            // Function to handle errors
-            function handleError(error) {
-                const { errorDetails, syncProgress, syncStatus, syncButton } = elements;
-                if (!errorDetails) return;
-
-                try {
-                    if (syncProgress) {
-                        syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-success');
-                        syncProgress.classList.add('bg-danger');
-                    }
-
-                    if (syncStatus) {
-                        syncStatus.className = 'text-danger mb-2';
-                        syncStatus.textContent = error.message || 'An error occurred';
-                    }
-
-                    const updateElement = (selector, content) => {
-                        const element = errorDetails.querySelector(selector);
-                        if (element) {
-                            element.textContent = content || '';
-                        }
-                    };
-
-                    updateElement('.alert-heading', error.type || 'Error');
-                    updateElement('.error-message', error.message || 'An error occurred');
-                    updateElement('.error-details', error.details || '');
-
-                    errorDetails.style.display = 'block';
-                    if (syncButton) {
-                        syncButton.disabled = false;
-                    }
-                } catch (e) {
-                    console.error('Error handling error display:', e);
-                }
-            }
-
-            // Initialize form submission handler
-            const syncForm = elements.syncForm;
-            if (syncForm) {
-                syncForm.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-
-                    if (!socket || !socket.connected) {
-                        handleError({
-                            type: 'CONNECTION_ERROR',
-                            message: 'Not connected to server',
-                            details: 'Please wait for connection to be established'
-                        });
-                        return;
-                    }
-
-                    const syncButton = elements.syncButton;
-                    const progressSection = elements.progressSection;
-
-                    try {
-                        if (syncButton) {
-                            syncButton.disabled = true;
-                        }
-                        if (progressSection) {
-                            progressSection.style.display = 'block';
-                        }
-
-                        resetProgress();
-
-                        const formData = new FormData(syncForm);
-                        const response = await fetch('/sync', {
-                            method: 'POST',
-                            body: formData
-                        });
-
-                        const data = await response.json();
-                        if (!response.ok) {
-                            throw { ...data, status_code: response.status };
-                        }
-                        if (data.status !== 'success') {
-                            throw new Error(data.message || 'Unknown error occurred');
-                        }
-                    } catch (error) {
-                        handleError({
-                            type: error.error_type || 'SYNC_ERROR',
-                            message: error.message || 'Error during sync process',
-                            details: error.details || 'Please try again'
-                        });
-                    }
-                });
-            }
-
-            // Function to reset progress
-            function resetProgress() {
-                const updates = {
-                    syncProgress: { width: '0%', text: '0%', classes: ['bg-primary'] },
-                    syncStatus: { text: 'Starting sync process...', classes: ['text-muted', 'mb-2'] },
-                    currentContact: { display: 'none' },
-                    errorDetails: { display: 'none' }
-                };
-
-                Object.entries(updates).forEach(([key, update]) => {
-                    const element = elements[key];
-                    if (!element) return;
-
-                    try {
-                        if (update.width) element.style.width = update.width;
-                        if (update.text) element.textContent = update.text;
-                        if (update.display) element.style.display = update.display;
-                        if (update.classes) {
-                            element.className = '';
-                            update.classes.forEach(cls => element.classList.add(cls));
-                        }
-                    } catch (error) {
-                        console.error(`Error resetting ${key}:`, error);
-                    }
-                });
-            }
-
-            // Initialize Socket.IO connection
-            initializeSocket();
-
-            // Clean up on page unload
-            window.addEventListener('beforeunload', () => {
-                if (socket && socket.connected) {
-                    socket.close();
-                }
-            });
+        // Global error handler for unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            handleError(formatErrorMessage(event.reason));
+            event.preventDefault();
         });
     </script>
 </body>
