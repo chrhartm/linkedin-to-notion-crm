@@ -57,36 +57,40 @@ class ContactManager:
 
     def _has_changes(self, existing_contact, new_contact):
         """
-        Compare existing contact with new contact data to detect changes
+        Compare existing contact with new contact data to detect changes with improved logging
+        and string normalization.
         """
         try:
             properties = existing_contact['properties']
             
-            # Compare Name
-            existing_name = self._get_title_value(properties.get('Name'))
-            if existing_name != new_contact.get('Name'):
-                return True
-
-            # Compare Company
-            existing_company = self._get_rich_text_value(properties.get('Company'))
-            if existing_company != new_contact.get('Company'):
-                return True
-
-            # Compare Position
-            existing_position = self._get_rich_text_value(properties.get('Position'))
-            if existing_position != new_contact.get('Position'):
-                return True
-
-            # Compare LinkedIn URL
-            existing_url = properties.get('LinkedIn URL', {}).get('url')
-            if existing_url != new_contact.get('LinkedIn URL'):
-                return True
-
-            # Compare Connected On date
-            existing_date = self._get_date_value(properties.get('Connected On'))
-            if existing_date != new_contact.get('Connected On'):
-                return True
-
+            # Helper function to normalize strings
+            def normalize(s):
+                return str(s).strip() if s else ''
+            
+            # Compare each field with logging
+            fields_to_compare = [
+                ('Name', self._get_title_value(properties.get('Name')), new_contact.get('Name')),
+                ('Company', self._get_rich_text_value(properties.get('Company')), new_contact.get('Company')),
+                ('Position', self._get_rich_text_value(properties.get('Position')), new_contact.get('Position')),
+                ('LinkedIn URL', properties.get('LinkedIn URL', {}).get('url'), new_contact.get('LinkedIn URL')),
+                ('Connected On', self._get_date_value(properties.get('Connected On')), new_contact.get('Connected On'))
+            ]
+            
+            logging.debug(f"Comparing contact: {new_contact.get('Name', 'Unknown')}")
+            
+            for field_name, existing_value, new_value in fields_to_compare:
+                existing_normalized = normalize(existing_value)
+                new_normalized = normalize(new_value)
+                
+                logging.debug(f"Comparing {field_name}:")
+                logging.debug(f"  Existing: '{existing_normalized}'")
+                logging.debug(f"  New: '{new_normalized}'")
+                
+                if existing_normalized != new_normalized:
+                    logging.info(f"Change detected in {field_name}: '{existing_normalized}' -> '{new_normalized}'")
+                    return True
+                    
+            logging.info("No changes detected, skipping update")
             return False
         except Exception as e:
             logging.warning(f"Error comparing contacts, assuming changes needed: {str(e)}")
