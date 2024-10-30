@@ -15,7 +15,7 @@ class ContactManager:
             
             # Create lookup by LinkedIn URL
             existing_urls = {
-                contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
+                contact['properties'].get('LinkedIn URL', {}).get('url'): contact
                 for contact in existing_contacts
                 if contact['properties'].get('LinkedIn URL', {}).get('url')
             }
@@ -30,11 +30,17 @@ class ContactManager:
                 try:
                     linkedin_url = contact.get('LinkedIn URL')
                     if linkedin_url in existing_urls:
-                        # Update existing contact
-                        self.notion_manager.update_contact(existing_urls[linkedin_url], contact)
+                        # Compare and update only if changed
+                        existing_contact = existing_urls[linkedin_url]
+                        if self._has_changes(existing_contact, contact):
+                            self.notion_manager.update_contact(existing_contact['id'], contact)
+                            logging.info(f"Updated contact: {contact.get('Name')}")
+                        else:
+                            logging.info(f"No changes detected for contact: {contact.get('Name')}")
                     else:
                         # Add new contact
                         self.notion_manager.add_contact(contact)
+                        logging.info(f"Added new contact: {contact.get('Name')}")
                 except Exception as e:
                     error_msg = f"Error syncing contact {contact.get('Name', 'Unknown')}: {str(e)}"
                     logging.error(error_msg)
@@ -48,6 +54,61 @@ class ContactManager:
         except Exception as e:
             logging.error(f"Error syncing contacts: {str(e)}")
             raise
+
+    def _has_changes(self, existing_contact, new_contact):
+        """
+        Compare existing contact with new contact data to detect changes
+        """
+        try:
+            properties = existing_contact['properties']
+            
+            # Compare Name
+            existing_name = self._get_title_value(properties.get('Name'))
+            if existing_name != new_contact.get('Name'):
+                return True
+
+            # Compare Company
+            existing_company = self._get_rich_text_value(properties.get('Company'))
+            if existing_company != new_contact.get('Company'):
+                return True
+
+            # Compare Position
+            existing_position = self._get_rich_text_value(properties.get('Position'))
+            if existing_position != new_contact.get('Position'):
+                return True
+
+            # Compare LinkedIn URL
+            existing_url = properties.get('LinkedIn URL', {}).get('url')
+            if existing_url != new_contact.get('LinkedIn URL'):
+                return True
+
+            # Compare Connected On date
+            existing_date = self._get_date_value(properties.get('Connected On'))
+            if existing_date != new_contact.get('Connected On'):
+                return True
+
+            return False
+        except Exception as e:
+            logging.warning(f"Error comparing contacts, assuming changes needed: {str(e)}")
+            return True
+
+    def _get_title_value(self, prop):
+        """Extract value from a title property"""
+        if not prop or 'title' not in prop:
+            return ''
+        return prop['title'][0]['text']['content'] if prop['title'] else ''
+
+    def _get_rich_text_value(self, prop):
+        """Extract value from a rich_text property"""
+        if not prop or 'rich_text' not in prop:
+            return ''
+        return prop['rich_text'][0]['text']['content'] if prop['rich_text'] else ''
+
+    def _get_date_value(self, prop):
+        """Extract value from a date property"""
+        if not prop or 'date' not in prop:
+            return ''
+        return prop['date']['start'] if prop['date'] else ''
 
     def update_contact(self, page_id, updates):
         try:
