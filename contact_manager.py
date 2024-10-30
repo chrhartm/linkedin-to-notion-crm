@@ -1,6 +1,8 @@
 import logging
 
+
 class ContactManager:
+
     def __init__(self, notion_manager, linkedin_parser):
         self.notion_manager = notion_manager
         self.linkedin_parser = linkedin_parser
@@ -8,22 +10,35 @@ class ContactManager:
     def sync_contacts(self, linkedin_export_path):
         try:
             # Parse LinkedIn contacts
-            linkedin_contacts = self.linkedin_parser.parse_linkedin_export(linkedin_export_path)
-            
+            linkedin_contacts = self.linkedin_parser.parse_linkedin_export(
+                linkedin_export_path)
+
             # Get existing contacts from Notion
             existing_contacts = self.notion_manager.get_all_contacts()
-            existing_linkedin_urls = {contact['properties']['LinkedIn URL']['url'] for contact in existing_contacts if contact['properties']['LinkedIn URL']['url']}
-            
+            existing_linkedin_urls = {
+                contact['properties']['LinkedIn URL']['url']
+                for contact in existing_contacts
+                if contact['properties']['LinkedIn URL']['url']
+            }
+
+            print(
+                f"Found {len(existing_contacts)} existing contacts in Notion")
+
             # Sync LinkedIn contacts to Notion database
             for contact in linkedin_contacts:
                 if contact['LinkedIn URL'] not in existing_linkedin_urls:
                     self.notion_manager.add_contact(contact)
                 else:
                     # Update existing contact
-                    existing_contact = next(c for c in existing_contacts if c['properties']['LinkedIn URL']['url'] == contact['LinkedIn URL'])
-                    self.notion_manager.update_contact(existing_contact['id'], contact)
+                    existing_contact = next(c for c in existing_contacts
+                                            if c['properties']['LinkedIn URL']
+                                            ['url'] == contact['LinkedIn URL'])
+                    self.notion_manager.update_contact(existing_contact['id'],
+                                                       contact)
 
-            logging.info(f"Synced {len(linkedin_contacts)} contacts to Notion database.")
+            logging.info(
+                f"Synced {len(linkedin_contacts)} contacts to Notion database."
+            )
         except Exception as e:
             logging.error(f"Error syncing contacts: {str(e)}")
             raise
@@ -41,7 +56,8 @@ class ContactManager:
         try:
             # Retrieve all contacts from Notion database
             contacts = self.notion_manager.get_all_contacts()
-            logging.info(f"Retrieved {len(contacts)} contacts from Notion database.")
+            logging.info(
+                f"Retrieved {len(contacts)} contacts from Notion database.")
             return contacts
         except Exception as e:
             logging.error(f"Error retrieving contacts: {str(e)}")

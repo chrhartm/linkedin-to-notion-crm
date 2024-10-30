@@ -35,13 +35,6 @@ def main():
         # Print available commands
         print("\nAvailable commands:")
         print("  sync <linkedin_export_path> - Sync LinkedIn contacts to Notion database")
-        print("  update_contact <page_id> <json_updates> - Update a specific contact")
-        print("  list_contacts - List all contacts in the Notion database")
-        print("  export_contacts <output_file_path> - Export all contacts to a CSV file")
-        print("  search_contacts <query> - Search contacts by name or company")
-        print("  list_overdue - List all overdue contacts")
-        print("  update_last_contacted <page_id> <date> - Update the last contacted date for a contact")
-        print("  print_db_properties - Print the current database properties")
         print("  quit - Exit the CLI")
         
         # Run the CLI

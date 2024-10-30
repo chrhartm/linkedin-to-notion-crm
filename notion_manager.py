@@ -30,16 +30,26 @@ class NotionManager:
                 "Industry": {"select": {
                     "options": [
                         {"name": "Technology", "color": "blue"},
-                        {"name": "Marketing", "color": "green"},
-                        {"name": "Finance", "color": "yellow"},
+                        {"name": "Insurance", "color": "green"},
+                        {"name": "Banking", "color": "yellow"},
+                        {"name": "Healthcare", "color": "red"},
+                        {"name": "Manufacturing", "color": "blue"},
+                        {"name": "Education", "color": "purple"},
+                        {"name": "Retail", "color": "pink"},
+                        {"name": "Automotive", "color": "orange"},
+                        {"name": "Construction", "color": "brown"},
+                        {"name": "Real Estate", "color": "green"},
+                        {"name": "Hospitality", "color": "yellow"},
+                        {"name": "Energy", "color": "gray"},
                         {"name": "Other", "color": "gray"}
                     ]
                 }},
                 "Field of Work": {"select": {
                     "options": [
                         {"name": "Software Development", "color": "blue"},
-                        {"name": "Data Science", "color": "green"},
-                        {"name": "Product Management", "color": "yellow"},
+                        {"name": "Marketing", "color": "green"},
+                        {"name": "Sales", "color": "red"},
+                        {"name": "Operations", "color": "yellow"},
                         {"name": "Other", "color": "gray"}
                     ]
                 }},
@@ -47,17 +57,15 @@ class NotionManager:
                 "Connected On": {"date": {}},
                 "Contact Schedule": {"select": {
                     "options": [
-                        {"name": "Never", "color": "gray"},
+                        {"name": "Daily", "color": "red"},
                         {"name": "Weekly", "color": "blue"},
-                        {"name": "Biweekly", "color": "green"},
                         {"name": "Monthly", "color": "yellow"},
-                        {"name": "Quarterly", "color": "orange"},
-                        {"name": "Biannually", "color": "red"},
-                        {"name": "Yearly", "color": "purple"}
+                        {"name": "Yearly", "color": "brown"},
+                        {"name": "As Needed", "color": "gray"}
                     ]
                 }},
                 'Overdue': {'formula': {
-                    'expression': 'now() > dateAdd(prop("Last Contacted"), 30, "days")'
+                    'expression': 'now() > prop("Last Contacted").dateAdd(ifs(prop("Contact Schedule").equal("Weekly"),7,prop("Contact Schedule").equal("Monthly"),30,prop("Contact Schedule").equal("Quarterly"),90,prop("Contact Schedule").equal("Yearly"),356,9999999999),"days")'
                 }},
                 "Email": {"email": {}},
                 "Tags": {"multi_select": {
@@ -65,6 +73,20 @@ class NotionManager:
                         {"name": "Important", "color": "red"},
                         {"name": "Follow-up", "color": "blue"},
                         {"name": "New Connection", "color": "green"}
+                    ]
+                }},
+                "Community": {"multi_select": {
+                    "options": [
+                        {"name": "University", "color": "red"},
+                        {"name": "High-School", "color": "blue"},
+                        {"name": "Toastmasters", "color": "green"}
+                    ]
+                }},
+                "Location": {"select": {
+                    "options": [
+                        {"name": "Berlin", "color": "red"},
+                        {"name": "Amsterdam", "color": "blue"},
+                        {"name": "London", "color": "green"}
                     ]
                 }},
             }
@@ -103,46 +125,61 @@ class NotionManager:
     def add_contact(self, contact):
         try:
             properties = {
-                "Name": {"title": [{"text": {"content": contact["Name"]}}]},
-                "LinkedIn URL": {"url": contact["LinkedIn URL"]},
-                "Company": {"rich_text": [{"text": {"content": contact["Company"]}}]},
-                "Position": {"rich_text": [{"text": {"content": contact["Position"]}}]},
-                "Industry": {"select": {"name": contact["Industry"]}},
-                "Field of Work": {"select": {"name": contact["Field of Work"]}},
-                "Last Contacted": {"date": {"start": contact["Last Contacted"]}},
-                "Connected On": {"date": {"start": contact["Connected On"]}},
-                "Contact Schedule": {"select": {"name": contact["Contact Schedule"]}},
+                "Name": {"title": [{"text": {"content": contact.get("Name", "Unknown")}}]},
+                "Company": {"rich_text": [{"text": {"content": contact.get("Company", "")}}]},
+                "Position": {"rich_text": [{"text": {"content": contact.get("Position", "")}}]},
+                "Connected On": {"date": {"start": contact.get("Connected On", "")}},
             }
+
+            # Handle LinkedIn URL separately
+            linkedin_url = contact.get("LinkedIn URL")
+            if linkedin_url and linkedin_url.strip():
+                properties["LinkedIn URL"] = {"url": linkedin_url.strip()}
+
+            # Remove any properties with None or empty string values
+            properties = {k: v for k, v in properties.items() if v is not None and v != ""}
+
             self.client.pages.create(parent={"database_id": self.database_id}, properties=properties)
-            logging.info(f"Added contact: {contact['Name']}")
+            logging.info(f"Added contact: {contact.get('Name', 'Unknown')}")
         except Exception as e:
             logging.error(f"Error adding contact: {str(e)}")
-            raise
+            # Don't raise the exception, just log it and continue
 
     def update_contact(self, page_id, updates):
         try:
             properties = {}
             for key, value in updates.items():
                 if key == "Name":
-                    properties[key] = {"title": [{"text": {"content": value}}]}
+                    properties[key] = {"title": [{"text": {"content": value or "Unknown"}}]}
                 elif key == "LinkedIn URL":
-                    properties[key] = {"url": value}
+                    if value and value.strip():
+                        properties[key] = {"url": value.strip()}
                 elif key in ["Company", "Position"]:
-                    properties[key] = {"rich_text": [{"text": {"content": value}}]}
-                elif key in ["Industry", "Field of Work", "Contact Schedule"]:
-                    properties[key] = {"select": {"name": value}}
-                elif key in ["Last Contacted", "Connected On"]:
-                    properties[key] = {"date": {"start": value}}
+                    properties[key] = {"rich_text": [{"text": {"content": value or ""}}]}
             
+            # Remove any properties with None or empty string values
+            properties = {k: v for k, v in properties.items() if v is not None and v != ""}
+
             self.client.pages.update(page_id=page_id, properties=properties)
             logging.info(f"Updated contact with page ID: {page_id}")
         except Exception as e:
             logging.error(f"Error updating contact: {str(e)}")
-            raise
+            # Don't raise the exception, just log it and continue
 
     def get_all_contacts(self):
         try:
-            results = self.client.databases.query(database_id=self.database_id)
+            query_post = {"database_id": self.database_id}
+            results = self.client.databases.query(**query_post)
+            next_cur = results.get("next_cursor")
+            while results["has_more"]:
+                query_post["start_cursor"] = next_cur
+                db_query_ret = self.client.databases.query(
+                      **query_post
+                 )
+                next_cur = db_query_ret["next_cursor"]
+                results["results"] += db_query_ret["results"]
+                if next_cur is None:
+                    break
             contacts = results.get("results", [])
             logging.info(f"Retrieved {len(contacts)} contacts from the database")
             return contacts

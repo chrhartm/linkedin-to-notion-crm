@@ -15,9 +15,8 @@ class LinkedInParser:
                 'Email Address': ['Email Address', 'Email_Address', 'EmailAddress', 'Email'],
                 'Company': ['Company', 'Organization', 'Company Name'],
                 'Position': ['Position', 'Job Title', 'Title'],
-                'Industry': ['Industry'],
                 'Connected On': ['Connected On', 'Connection Date', 'Connected_On'],
-                'Profile URL': ['Profile URL', 'LinkedIn URL', 'Public Profile URL']
+                'Profile URL': ['URL', 'LinkedIn URL', 'Public Profile URL']
             }
 
             # Find the actual column names in the CSV
@@ -35,11 +34,7 @@ class LinkedInParser:
                     "LinkedIn URL": row.get(actual_columns.get('Profile URL', ''), ''),
                     "Company": row.get(actual_columns.get('Company', ''), ''),
                     "Position": row.get(actual_columns.get('Position', ''), ''),
-                    "Industry": row.get(actual_columns.get('Industry', ''), 'Unknown'),
-                    "Field of Work": "Unknown",  # This field is not typically in LinkedIn exports
-                    "Last Contacted": row.get(actual_columns.get('Connected On', ''), '1970-01-01'),
-                    "Contact Schedule": "Monthly",  # Set a default schedule
-                    "Connected On": row.get(actual_columns.get('Connected On', ''), '1970-01-01'),
+                    "Connected On": str.join("-",row.get(actual_columns.get('Connected On', ''), '').split(" ")[::-1]).replace("Jan", "01").replace("Feb", "02").replace("Mar", "03").replace("Apr", "04").replace("May", "05").replace("Jun", "06").replace("Jul", "07").replace("Aug", "08").replace("Sep", "09").replace("Oct", "10").replace("Nov", "11").replace("Dec", "12"),
                 }
                 contacts.append(contact)
 
