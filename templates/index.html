@@ -52,9 +52,6 @@
                                 <p class="mb-0 error-message"></p>
                                 <small class="error-details"></small>
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-danger retry-button" style="display: none;">
-                                Retry
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -111,6 +108,36 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        class SyncState {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.status = 'idle';
+                this.message = '';
+                this.total = 0;
+                this.current = 0;
+                this.contact = null;
+                this.errorType = null;
+                this.errorDetails = null;
+            }
+
+            update(data) {
+                this.status = data.status;
+                this.message = data.message || '';
+                this.total = data.total || 0;
+                this.current = data.current || 0;
+                this.contact = data.contact || null;
+                this.errorType = data.error_type || null;
+                this.errorDetails = data.details || null;
+            }
+
+            isInProgress() {
+                return this.status === 'processing' || this.status === 'retrying';
+            }
+        }
+
         class SocketManager {
             constructor() {
                 this.socket = null;
@@ -118,6 +145,15 @@
                 this.maxReconnectAttempts = 10;
                 this.baseReconnectDelay = 1000;
                 this.maxReconnectDelay = 30000;
+                this.heartbeatInterval = null;
+                this.state = new SyncState();
+                
+                this.initializeDOMElements();
+                this.connect();
+                this.setupEventListeners();
+            }
+
+            initializeDOMElements() {
                 this.connectionStatus = document.getElementById('connectionStatus');
                 this.progressSection = document.getElementById('progressSection');
                 this.syncProgress = document.getElementById('syncProgress');
@@ -127,14 +163,11 @@
                 this.syncForm = document.getElementById('syncForm');
                 this.syncButton = document.getElementById('syncButton');
                 this.socketIdInput = document.getElementById('socket_id');
-                
-                this.connect();
-                this.setupEventListeners();
             }
 
             connect() {
                 if (this.socket) {
-                    this.socket.close();
+                    this.cleanup();
                 }
 
                 this.socket = io({
@@ -148,46 +181,56 @@
                 this.setupSocketEventHandlers();
             }
 
+            cleanup() {
+                if (this.heartbeatInterval) {
+                    clearInterval(this.heartbeatInterval);
+                    this.heartbeatInterval = null;
+                }
+                if (this.socket) {
+                    this.socket.close();
+                    this.socket = null;
+                }
+            }
+
             setupSocketEventHandlers() {
-                this.socket.on('connect', () => {
-                    this.onConnect();
-                });
+                this.socket.on('connect', () => this.onConnect());
+                this.socket.on('disconnect', (reason) => this.onDisconnect(reason));
+                this.socket.on('connect_error', (error) => this.onConnectError(error));
+                this.socket.on('reconnect_attempt', (attemptNumber) => this.onReconnectAttempt(attemptNumber));
+                this.socket.on('reconnect_failed', () => this.onReconnectFailed());
+                this.socket.on('sync_progress', (data) => this.handleSyncProgress(data));
+            }
 
-                this.socket.on('disconnect', (reason) => {
-                    this.onDisconnect(reason);
-                });
-
-                this.socket.on('connect_error', (error) => {
-                    this.onConnectError(error);
-                });
-
-                this.socket.on('reconnect_attempt', (attemptNumber) => {
-                    this.onReconnectAttempt(attemptNumber);
-                });
-
-                this.socket.on('reconnect_failed', () => {
-                    this.onReconnectFailed();
-                });
-
-                this.socket.on('sync_progress', (data) => {
-                    this.handleSyncProgress(data);
-                });
+            startHeartbeat() {
+                if (this.heartbeatInterval) {
+                    clearInterval(this.heartbeatInterval);
+                }
+                this.heartbeatInterval = setInterval(() => {
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('heartbeat');
+                    }
+                }, 5000);
             }
 
             onConnect() {
                 this.reconnectAttempts = 0;
                 this.socketIdInput.value = this.socket.id;
                 this.updateConnectionStatus('success', 'Connected to server');
+                
+                this.startHeartbeat();
+                this.requestCurrentState();
+                
                 setTimeout(() => {
                     this.connectionStatus.style.display = 'none';
                 }, 3000);
             }
 
             onDisconnect(reason) {
+                this.cleanup();
                 this.updateConnectionStatus('warning', 'Disconnected from server. Attempting to reconnect...');
+                
                 if (reason === 'io server disconnect') {
-                    // Server disconnected us, try to reconnect immediately
-                    this.socket.connect();
+                    this.connect();
                 }
             }
 
@@ -196,6 +239,9 @@
                 const message = `Connection attempt ${this.reconnectAttempts} failed. ${this.getReconnectMessage()}`;
                 this.updateConnectionStatus('danger', message);
                 console.error('Connection error:', error);
+                
+                const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+                setTimeout(() => this.connect(), delay);
             }
 
             onReconnectAttempt(attemptNumber) {
@@ -206,6 +252,12 @@
             onReconnectFailed() {
                 const message = 'Could not connect to server. Please refresh the page to try again.';
                 this.updateConnectionStatus('danger', message);
+            }
+
+            requestCurrentState() {
+                if (this.socket && this.socket.connected) {
+                    this.socket.emit('request_state');
+                }
             }
 
             getReconnectMessage() {
@@ -224,16 +276,23 @@
             setupEventListeners() {
                 this.syncForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
-                    if (!this.socket.connected) {
+                    if (!this.socket || !this.socket.connected) {
                         this.showError('Connection Error', 'Not connected to server. Please wait for reconnection or refresh the page.');
                         return;
                     }
                     await this.handleFormSubmit(e);
                 });
+
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        this.requestCurrentState();
+                    }
+                });
             }
 
             async handleFormSubmit(e) {
                 this.resetProgress();
+                this.state.reset();
                 this.progressSection.style.display = 'block';
                 this.syncButton.disabled = true;
                 
@@ -258,16 +317,22 @@
             }
 
             handleSyncProgress(data) {
+                this.state.update(data);
                 this.progressSection.style.display = 'block';
                 
-                if (data.status === 'processing') {
-                    this.updateProgressBar(data);
-                } else if (data.status === 'completed') {
-                    this.handleSyncComplete(data);
-                } else if (data.status === 'error') {
-                    this.handleSyncError(data);
-                } else if (data.status === 'retrying') {
-                    this.handleSyncRetry(data);
+                switch (data.status) {
+                    case 'processing':
+                        this.updateProgressBar(data);
+                        break;
+                    case 'completed':
+                        this.handleSyncComplete(data);
+                        break;
+                    case 'error':
+                        this.handleSyncError(data);
+                        break;
+                    case 'retrying':
+                        this.handleSyncRetry(data);
+                        break;
                 }
             }
 
@@ -355,12 +420,10 @@
             }
         }
 
-        // Initialize socket manager when the page loads
         document.addEventListener('DOMContentLoaded', () => {
             window.socketManager = new SocketManager();
         });
 
-        // Global error handler for unhandled promise rejections
         window.addEventListener('unhandledrejection', (event) => {
             console.error('Unhandled promise rejection:', event.reason);
             if (window.socketManager) {
