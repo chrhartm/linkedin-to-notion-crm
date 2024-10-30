@@ -6,7 +6,7 @@ from contact_manager import ContactManager
 import os
 import logging
 
-app = Flask(__name__, static_url_path='', static_folder='assets')
+app = Flask(__name__, static_folder='static')
 app.secret_key = os.urandom(24)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
@@ -20,6 +20,14 @@ def allowed_file(filename):
 @app.route('/')
 def home():
     return render_template('index.html')
+
+@app.route('/howto-linkedin.png')
+def serve_linkedin_image():
+    return send_from_directory('assets', 'howto-linkedin.png')
+
+@app.route('/howto-notion.png')
+def serve_notion_image():
+    return send_from_directory('assets', 'howto-notion.png')
 
 @app.route('/sync', methods=['POST'])
 def sync_contacts():
