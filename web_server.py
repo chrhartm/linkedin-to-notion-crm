@@ -158,15 +158,25 @@ def process_sync_queue():
 
                     # Process the contact using ContactManager
                     try:
-                        is_update = any(
-                            existing['properties'].get('LinkedIn URL', {}).get('url') == contact.get('LinkedIn URL')
-                            for existing in existing_contacts
+                        existing_contact = next(
+                            (existing for existing in existing_contacts 
+                             if existing['properties'].get('LinkedIn URL', {}).get('url') == contact.get('LinkedIn URL')),
+                            None
                         )
-                        contact_manager._process_single_contact(contact, existing_contacts)
-                        if is_update:
-                            updated_count += 1
+                        
+                        if existing_contact:
+                            # Check if contact actually needed updates
+                            if contact_manager._has_changes(existing_contact, contact):
+                                contact_manager._process_single_contact(contact, existing_contacts)
+                                updated_count += 1
+                                logging.info(f"Updated contact with changes: {contact.get('Name')}")
+                            else:
+                                skipped_count += 1
+                                logging.info(f"Skipped contact (no changes): {contact.get('Name')}")
                         else:
+                            contact_manager._process_single_contact(contact, existing_contacts)
                             added_count += 1
+                            logging.info(f"Added new contact: {contact.get('Name')}")
                     except Exception as e:
                         logging.error(f"Error processing contact {contact_name}: {str(e)}")
                         raise
