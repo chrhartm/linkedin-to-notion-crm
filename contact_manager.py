@@ -19,49 +19,6 @@ class ContactManager:
         
         return has_valid_data
 
-    def sync_contacts(self, linkedin_export_path):
-        try:
-            # Parse LinkedIn contacts
-            linkedin_contacts = self.linkedin_parser.parse_linkedin_export(linkedin_export_path)
-
-            # Get existing contacts from Notion
-            existing_contacts = self.notion_manager.get_all_contacts()
-            
-            # Create lookup by LinkedIn URL
-            existing_urls = {
-                contact['properties'].get('LinkedIn URL', {}).get('url'): contact
-                for contact in existing_contacts
-                if contact['properties'].get('LinkedIn URL', {}).get('url')
-            }
-
-            print(f"Found {len(existing_contacts)} existing contacts in Notion")
-            
-            # Track sync errors
-            sync_errors = []
-            skipped_contacts = 0
-
-            # Sync LinkedIn contacts to Notion database
-            for contact in linkedin_contacts:
-                try:
-                    if not self._is_valid_contact(contact):
-                        skipped_contacts += 1
-                        continue
-
-                    self._process_single_contact(contact, existing_contacts)
-                except Exception as e:
-                    error_msg = f"Error syncing contact {contact.get('Name', 'Unknown')}: {str(e)}"
-                    logging.error(error_msg)
-                    sync_errors.append(error_msg)
-
-            if sync_errors:
-                error_summary = "\n".join(sync_errors)
-                raise Exception(f"Encountered errors while syncing contacts:\n{error_summary}")
-
-            logging.info(f"Synced {len(linkedin_contacts) - skipped_contacts} contacts to Notion database. Skipped {skipped_contacts} empty contacts.")
-        except Exception as e:
-            logging.error(f"Error syncing contacts: {str(e)}")
-            raise
-
     def _process_single_contact(self, contact, existing_contacts):
         """Process a single contact, either updating existing or adding new."""
         try:
@@ -148,18 +105,9 @@ class ContactManager:
             return ''
         return prop['date']['start'] if prop['date'] else ''
 
-    def update_contact(self, page_id, updates):
-        try:
-            # Update a specific contact
-            self.notion_manager.update_contact(page_id, updates)
-            logging.info(f"Updated contact with page ID: {page_id}")
-        except Exception as e:
-            logging.error(f"Error updating contact: {str(e)}")
-            raise
-
     def get_all_contacts(self):
+        """Retrieve all contacts from Notion database."""
         try:
-            # Retrieve all contacts from Notion database
             contacts = self.notion_manager.get_all_contacts()
             logging.info(f"Retrieved {len(contacts)} contacts from Notion database.")
             return contacts
