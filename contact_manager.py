@@ -12,8 +12,10 @@ class ContactManager:
 
             # Get existing contacts from Notion
             existing_contacts = self.notion_manager.get_all_contacts()
-            existing_linkedin_urls = {
-                contact['properties']['LinkedIn URL']['url']
+            
+            # Create lookup by LinkedIn URL
+            existing_urls = {
+                contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
                 for contact in existing_contacts
                 if contact['properties'].get('LinkedIn URL', {}).get('url')
             }
@@ -26,15 +28,13 @@ class ContactManager:
             # Sync LinkedIn contacts to Notion database
             for contact in linkedin_contacts:
                 try:
-                    if contact['LinkedIn URL'] not in existing_linkedin_urls:
-                        self.notion_manager.add_contact(contact)
-                    else:
+                    linkedin_url = contact.get('LinkedIn URL')
+                    if linkedin_url in existing_urls:
                         # Update existing contact
-                        existing_contact = next(c for c in existing_contacts
-                                            if c['properties']['LinkedIn URL']
-                                            ['url'] == contact['LinkedIn URL'])
-                        self.notion_manager.update_contact(existing_contact['id'],
-                                                       contact)
+                        self.notion_manager.update_contact(existing_urls[linkedin_url], contact)
+                    else:
+                        # Add new contact
+                        self.notion_manager.add_contact(contact)
                 except Exception as e:
                     error_msg = f"Error syncing contact {contact.get('Name', 'Unknown')}: {str(e)}"
                     logging.error(error_msg)

@@ -102,8 +102,21 @@ def process_sync_queue():
                     'message': 'Parsing LinkedIn export file...'
                 }, room)
                 
-                contacts = linkedin_parser.parse_linkedin_export(filepath)
-                total_contacts = len(contacts)
+                linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
+                total_contacts = len(linkedin_contacts)
+                
+                # Get existing contacts
+                emit_sync_progress({
+                    'status': 'processing',
+                    'message': 'Fetching existing contacts...'
+                }, room)
+                
+                existing_contacts = notion_manager.get_all_contacts()
+                existing_urls = {
+                    contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
+                    for contact in existing_contacts
+                    if contact['properties'].get('LinkedIn URL', {}).get('url')
+                }
                 
                 emit_sync_progress({
                     'status': 'processing',
@@ -112,16 +125,23 @@ def process_sync_queue():
                     'message': f'Found {total_contacts} contacts to process'
                 }, room)
 
-                for i, contact in enumerate(contacts, 1):
+                for i, contact in enumerate(linkedin_contacts, 1):
                     retry_count = 0
                     while retry_count < MAX_RETRIES:
                         try:
-                            notion_manager.add_contact(contact)
+                            linkedin_url = contact.get('LinkedIn URL')
+                            action = 'Updating' if linkedin_url in existing_urls else 'Adding'
+                            
+                            if linkedin_url in existing_urls:
+                                notion_manager.update_contact(existing_urls[linkedin_url], contact)
+                            else:
+                                notion_manager.add_contact(contact)
+                            
                             emit_sync_progress({
                                 'status': 'processing',
                                 'total': total_contacts,
                                 'current': i,
-                                'message': f'Processing contact: {contact.get("Name", "Unknown")} ({i}/{total_contacts})',
+                                'message': f'{action} contact: {contact.get("Name", "Unknown")} ({i}/{total_contacts})',
                                 'contact': contact.get('Name', 'Unknown')
                             }, room)
                             break
