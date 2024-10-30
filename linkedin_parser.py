@@ -29,12 +29,13 @@ class LinkedInParser:
                     logging.warning(f"Column '{expected_col}' not found in the CSV. Using default values.")
 
             for _, row in df.iterrows():
+                # Convert all values to strings and handle NaN/None values
                 contact = {
-                    "Name": f"{row[actual_columns.get('First Name', '')]} {row[actual_columns.get('Last Name', '')]}".strip(),
-                    "LinkedIn URL": row.get(actual_columns.get('Profile URL', ''), ''),
-                    "Company": row.get(actual_columns.get('Company', ''), ''),
-                    "Position": row.get(actual_columns.get('Position', ''), ''),
-                    "Connected On": str.join("-",row.get(actual_columns.get('Connected On', ''), '').split(" ")[::-1]).replace("Jan", "01").replace("Feb", "02").replace("Mar", "03").replace("Apr", "04").replace("May", "05").replace("Jun", "06").replace("Jul", "07").replace("Aug", "08").replace("Sep", "09").replace("Oct", "10").replace("Nov", "11").replace("Dec", "12"),
+                    "Name": f"{str(row[actual_columns.get('First Name', '')]).strip() if pd.notna(row[actual_columns.get('First Name', '')]) else ''} {str(row[actual_columns.get('Last Name', '')]).strip() if pd.notna(row[actual_columns.get('Last Name', '')]) else ''}".strip(),
+                    "LinkedIn URL": str(row.get(actual_columns.get('Profile URL', ''), '')).strip() if pd.notna(row.get(actual_columns.get('Profile URL', ''), '')) else '',
+                    "Company": str(row.get(actual_columns.get('Company', ''), '')).strip() if pd.notna(row.get(actual_columns.get('Company', ''), '')) else '',
+                    "Position": str(row.get(actual_columns.get('Position', ''), '')).strip() if pd.notna(row.get(actual_columns.get('Position', ''), '')) else '',
+                    "Connected On": self._format_date(str(row.get(actual_columns.get('Connected On', ''), '')).strip() if pd.notna(row.get(actual_columns.get('Connected On', ''), '')) else ''),
                 }
                 contacts.append(contact)
 
@@ -43,3 +44,24 @@ class LinkedInParser:
         except Exception as e:
             logging.error(f"Error parsing LinkedIn export: {str(e)}")
             raise
+
+    def _format_date(self, date_str):
+        """Format the date string to a consistent format"""
+        if not date_str:
+            return ''
+        
+        # Split by space and reverse to get components
+        parts = date_str.split(' ')
+        if len(parts) != 3:
+            return date_str
+            
+        # Map month names to numbers
+        month_map = {
+            'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+            'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+            'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+        }
+        
+        day, month, year = parts
+        month = month_map.get(month, month)
+        return f"{year}-{month}-{day}"
