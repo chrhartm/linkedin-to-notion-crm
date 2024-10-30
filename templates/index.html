@@ -12,7 +12,7 @@
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Sync LinkedIn Contacts</h5>
-                <form action="/sync" method="post" enctype="multipart/form-data" class="mb-4">
+                <form id="syncForm" action="/sync" method="post" enctype="multipart/form-data" class="mb-4">
                     <div class="mb-3">
                         <label for="notion_token" class="form-label">Notion Token</label>
                         <input type="password" class="form-control" id="notion_token" name="notion_token" required>
@@ -25,8 +25,17 @@
                         <label for="linkedin_file" class="form-label">LinkedIn Contacts CSV</label>
                         <input type="file" class="form-control" id="linkedin_file" name="linkedin_file" accept=".csv" required>
                     </div>
-                    <button type="submit" class="btn btn-primary">Sync Contacts</button>
+                    <button type="submit" class="btn btn-primary" id="syncButton">Sync Contacts</button>
                 </form>
+
+                <!-- Progress Bar (hidden by default) -->
+                <div id="progressSection" style="display: none;">
+                    <div class="progress mb-3">
+                        <div id="syncProgress" class="progress-bar" role="progressbar" style="width: 0%;" 
+                             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                    </div>
+                    <p id="syncStatus" class="text-muted"></p>
+                </div>
             </div>
         </div>
 
@@ -42,11 +51,11 @@
                         <p>Follow these steps to export your LinkedIn connections:</p>
                         <ol class="list-group list-group-numbered mb-3">
                             <li class="list-group-item">Go to LinkedIn.com and sign in</li>
-                            <li class="list-group-item">Click on 'My Network'</li>
-                            <li class="list-group-item">Click on 'Connections'</li>
-                            <li class="list-group-item">Click on 'Manage Sync and Export Options'</li>
-                            <li class="list-group-item">Select 'Export Connections'</li>
-                            <li class="list-group-item">Download your connections as CSV</li>
+                            <li class="list-group-item">Click on 'Me'</li>
+                            <li class="list-group-item">Click on 'Settings & Privacy'</li>
+                            <li class="list-group-item">Click on 'Data Privacy'</li>
+                            <li class="list-group-item">Select 'Get a copy of your data'</li>
+                            <li class="list-group-item">Select 'Connections' and request a download</li>
                         </ol>
                     </div>
                     <div class="text-center">
@@ -83,5 +92,83 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('syncForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const progressSection = document.getElementById('progressSection');
+            const progressBar = document.getElementById('syncProgress');
+            const statusText = document.getElementById('syncStatus');
+            const syncButton = document.getElementById('syncButton');
+            
+            // Show progress section and disable submit button
+            progressSection.style.display = 'block';
+            syncButton.disabled = true;
+            
+            // Start the sync
+            fetch('/sync', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Start polling for progress
+                    pollProgress();
+                } else {
+                    throw new Error(data.message);
+                }
+            })
+            .catch(error => {
+                statusText.textContent = `Error: ${error.message}`;
+                statusText.className = 'text-danger';
+                syncButton.disabled = false;
+            });
+        });
+
+        function pollProgress() {
+            const progressBar = document.getElementById('syncProgress');
+            const statusText = document.getElementById('syncStatus');
+            const syncButton = document.getElementById('syncButton');
+
+            const checkProgress = () => {
+                fetch('/sync/progress')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.total > 0) {
+                            const percentage = Math.round((data.current / data.total) * 100);
+                            progressBar.style.width = `${percentage}%`;
+                            progressBar.textContent = `${percentage}%`;
+                            progressBar.setAttribute('aria-valuenow', percentage);
+                            
+                            statusText.textContent = `Processing: ${data.current} of ${data.total} contacts`;
+
+                            if (data.status === 'completed') {
+                                statusText.textContent = 'Sync completed successfully!';
+                                statusText.className = 'text-success';
+                                syncButton.disabled = false;
+                                return;
+                            } else if (data.status === 'error') {
+                                statusText.textContent = 'Error occurred during sync';
+                                statusText.className = 'text-danger';
+                                syncButton.disabled = false;
+                                return;
+                            }
+                        }
+                        
+                        // Continue polling if not completed or error
+                        setTimeout(checkProgress, 1000);
+                    })
+                    .catch(error => {
+                        statusText.textContent = `Error: ${error.message}`;
+                        statusText.className = 'text-danger';
+                        syncButton.disabled = false;
+                    });
+            };
+
+            checkProgress();
+        }
+    </script>
 </body>
 </html>
