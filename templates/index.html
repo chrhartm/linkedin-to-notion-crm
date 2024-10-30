@@ -36,6 +36,18 @@
                     <button type="submit" class="btn btn-primary" id="syncButton">Sync Contacts</button>
                 </form>
 
+                <!-- Progress Note -->
+                <div class="alert alert-info mb-3" role="alert">
+                    <h6 class="alert-heading mb-2">About the Sync Process:</h6>
+                    <ul class="mb-0">
+                        <li>The progress bar shows the current status of contact syncing</li>
+                        <li>Each contact is processed individually to ensure accuracy</li>
+                        <li>If any errors occur, the system will automatically retry up to 3 times</li>
+                        <li>The sync process may take several minutes depending on the number of contacts</li>
+                        <li>Please keep this window open until the sync is complete</li>
+                    </ul>
+                </div>
+
                 <!-- Progress Section -->
                 <div id="progressSection" style="display: none;">
                     <div class="progress mb-3">
