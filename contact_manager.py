@@ -28,19 +28,7 @@ class ContactManager:
             # Sync LinkedIn contacts to Notion database
             for contact in linkedin_contacts:
                 try:
-                    linkedin_url = contact.get('LinkedIn URL')
-                    if linkedin_url in existing_urls:
-                        # Compare and update only if changed
-                        existing_contact = existing_urls[linkedin_url]
-                        if self._has_changes(existing_contact, contact):
-                            self.notion_manager.update_contact(existing_contact['id'], contact)
-                            logging.info(f"Updated contact: {contact.get('Name')}")
-                        else:
-                            logging.info(f"No changes detected for contact: {contact.get('Name')}")
-                    else:
-                        # Add new contact
-                        self.notion_manager.add_contact(contact)
-                        logging.info(f"Added new contact: {contact.get('Name')}")
+                    self._process_single_contact(contact, existing_contacts)
                 except Exception as e:
                     error_msg = f"Error syncing contact {contact.get('Name', 'Unknown')}: {str(e)}"
                     logging.error(error_msg)
@@ -53,6 +41,33 @@ class ContactManager:
             logging.info(f"Synced {len(linkedin_contacts)} contacts to Notion database.")
         except Exception as e:
             logging.error(f"Error syncing contacts: {str(e)}")
+            raise
+
+    def _process_single_contact(self, contact, existing_contacts):
+        """Process a single contact, either updating existing or adding new."""
+        try:
+            linkedin_url = contact.get('LinkedIn URL')
+            existing_contact = None
+            
+            # Find existing contact by LinkedIn URL
+            for existing in existing_contacts:
+                if existing['properties'].get('LinkedIn URL', {}).get('url') == linkedin_url:
+                    existing_contact = existing
+                    break
+
+            if existing_contact:
+                # Compare and update only if changed
+                if self._has_changes(existing_contact, contact):
+                    self.notion_manager.update_contact(existing_contact['id'], contact)
+                    logging.info(f"Updated contact: {contact.get('Name')}")
+                else:
+                    logging.info(f"No changes detected for contact: {contact.get('Name')}")
+            else:
+                # Add new contact
+                self.notion_manager.add_contact(contact)
+                logging.info(f"Added new contact: {contact.get('Name')}")
+        except Exception as e:
+            logging.error(f"Error processing contact {contact.get('Name', 'Unknown')}: {str(e)}")
             raise
 
     def _has_changes(self, existing_contact, new_contact):

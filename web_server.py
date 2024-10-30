@@ -97,18 +97,42 @@ def process_sync_queue():
                 linkedin_parser = LinkedInParser()
                 contact_manager = ContactManager(notion_manager, linkedin_parser)
 
-                # Parse LinkedIn contacts using ContactManager
+                # Step 1: Parse LinkedIn contacts
                 emit_sync_progress({
                     'status': 'processing',
-                    'message': 'Processing LinkedIn contacts...'
+                    'message': 'Loading LinkedIn contacts from CSV file...'
+                }, room)
+                linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
+
+                # Step 2: Load Notion contacts
+                emit_sync_progress({
+                    'status': 'processing',
+                    'message': 'Loading existing contacts from Notion database...'
+                }, room)
+                existing_contacts = contact_manager.get_all_contacts()
+
+                total_contacts = len(linkedin_contacts)
+                emit_sync_progress({
+                    'status': 'processing',
+                    'message': f'Processing {total_contacts} LinkedIn contacts...',
+                    'total': total_contacts,
+                    'current': 0
                 }, room)
 
-                # Get existing contacts
-                existing_contacts = contact_manager.get_all_contacts()
-                
-                # Start the sync process
-                contact_manager.sync_contacts(filepath)
-                
+                # Step 3: Sync contacts
+                for index, contact in enumerate(linkedin_contacts, 1):
+                    contact_name = contact.get('Name', 'Unknown Contact')
+                    emit_sync_progress({
+                        'status': 'processing',
+                        'message': f'Processing contact {index} of {total_contacts}',
+                        'contact': contact_name,
+                        'total': total_contacts,
+                        'current': index
+                    }, room)
+
+                    # Process the contact using ContactManager
+                    contact_manager._process_single_contact(contact, existing_contacts)
+
                 emit_sync_progress({
                     'status': 'completed',
                     'message': 'Sync completed successfully!'
