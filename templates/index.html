@@ -5,16 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Personal CRM</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .howto-image {
-            max-width: 100%;
-            height: auto;
-            margin: 1rem 0;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-    </style>
 </head>
 <body>
     <div class="container mt-5">
@@ -43,20 +33,34 @@
         <!-- How To Section -->
         <div class="card mb-4">
             <div class="card-body">
-                <h2 class="card-title">How To Use</h2>
+                <h2 class="card-title mb-4">How To Use</h2>
                 
                 <!-- LinkedIn Instructions -->
                 <div class="mb-4">
                     <h3>1. Export LinkedIn Contacts</h3>
                     <p>Follow these steps to export your LinkedIn connections:</p>
-                    <img src="/assets/howto-linkedin.png" alt="LinkedIn Export Instructions" class="howto-image">
+                    <ol class="list-group list-group-numbered">
+                        <li class="list-group-item">Go to LinkedIn.com and sign in</li>
+                        <li class="list-group-item">Click on 'My Network'</li>
+                        <li class="list-group-item">Click on 'Connections'</li>
+                        <li class="list-group-item">Click on 'Manage Sync and Export Options'</li>
+                        <li class="list-group-item">Select 'Export Connections'</li>
+                        <li class="list-group-item">Download your connections as CSV</li>
+                    </ol>
                 </div>
 
                 <!-- Notion Instructions -->
                 <div class="mb-4">
                     <h3>2. Set Up Notion Integration</h3>
                     <p>Configure your Notion integration and get your credentials:</p>
-                    <img src="/assets/howto-notion.png" alt="Notion Setup Instructions" class="howto-image">
+                    <ol class="list-group list-group-numbered">
+                        <li class="list-group-item">Go to notion.so/my-integrations</li>
+                        <li class="list-group-item">Click 'Create new integration'</li>
+                        <li class="list-group-item">Name your integration</li>
+                        <li class="list-group-item">Copy the Integration Token</li>
+                        <li class="list-group-item">Create a new database in Notion</li>
+                        <li class="list-group-item">Copy the database ID from the URL</li>
+                    </ol>
                 </div>
             </div>
         </div>
