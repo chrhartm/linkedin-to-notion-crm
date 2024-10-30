@@ -92,80 +92,37 @@ def process_sync_queue():
                 os.environ['NOTION_TOKEN'] = notion_token
                 os.environ['NOTION_DATABASE_ID'] = notion_database_id
 
+                # Initialize managers and create ContactManager instance
                 notion_manager = NotionManager()
                 linkedin_parser = LinkedInParser()
                 contact_manager = ContactManager(notion_manager, linkedin_parser)
 
-                # Parse LinkedIn contacts
+                # Parse LinkedIn contacts using ContactManager
                 emit_sync_progress({
                     'status': 'processing',
-                    'message': 'Parsing LinkedIn export file...'
+                    'message': 'Processing LinkedIn contacts...'
                 }, room)
-                
-                linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
-                total_contacts = len(linkedin_contacts)
-                
+
                 # Get existing contacts
-                emit_sync_progress({
-                    'status': 'processing',
-                    'message': 'Fetching existing contacts...'
-                }, room)
+                existing_contacts = contact_manager.get_all_contacts()
                 
-                existing_contacts = notion_manager.get_all_contacts()
-                existing_urls = {
-                    contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
-                    for contact in existing_contacts
-                    if contact['properties'].get('LinkedIn URL', {}).get('url')
-                }
+                # Start the sync process
+                contact_manager.sync_contacts(filepath)
                 
-                emit_sync_progress({
-                    'status': 'processing',
-                    'total': total_contacts,
-                    'current': 0,
-                    'message': f'Found {total_contacts} contacts to process'
-                }, room)
-
-                for i, contact in enumerate(linkedin_contacts, 1):
-                    retry_count = 0
-                    while retry_count < MAX_RETRIES:
-                        try:
-                            linkedin_url = contact.get('LinkedIn URL')
-                            action = 'Updating' if linkedin_url in existing_urls else 'Adding'
-                            
-                            if linkedin_url in existing_urls:
-                                notion_manager.update_contact(existing_urls[linkedin_url], contact)
-                            else:
-                                notion_manager.add_contact(contact)
-                            
-                            emit_sync_progress({
-                                'status': 'processing',
-                                'total': total_contacts,
-                                'current': i,
-                                'message': f'{action} contact: {contact.get("Name", "Unknown")} ({i}/{total_contacts})',
-                                'contact': contact.get('Name', 'Unknown')
-                            }, room)
-                            break
-                        except Exception as e:
-                            retry_count += 1
-                            if retry_count >= MAX_RETRIES:
-                                raise e
-                            emit_sync_progress({
-                                'status': 'retrying',
-                                'message': f'Retry {retry_count}/{MAX_RETRIES} for contact {contact.get("Name", "Unknown")}'
-                            }, room)
-
                 emit_sync_progress({
                     'status': 'completed',
-                    'total': total_contacts,
-                    'current': total_contacts,
                     'message': 'Sync completed successfully!'
                 }, room)
 
+            except APIResponseError as e:
+                emit_sync_progress({
+                    'status': 'error',
+                    'error_type': SyncError.NOTION_API,
+                    'message': str(e),
+                    'details': traceback.format_exc()
+                }, room)
             except Exception as e:
-                error_type = (
-                    SyncError.NOTION_API if isinstance(e, APIResponseError)
-                    else SyncError.NETWORK
-                )
+                error_type = SyncError.NETWORK if "connection" in str(e).lower() else SyncError.FILE_PROCESSING
                 emit_sync_progress({
                     'status': 'error',
                     'error_type': error_type,
