@@ -4,7 +4,7 @@ eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request, flash, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit, disconnect
+from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 from notion_manager import NotionManager
 from linkedin_parser import LinkedInParser
@@ -17,67 +17,11 @@ from notion_client.errors import APIResponseError
 import traceback
 import queue
 import threading
-import ssl
-import re
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-
-# Function to validate Replit domains
-def is_valid_replit_domain(origin):
-    if not origin:
-        return False
-    replit_patterns = [
-        r'^https?://.*\.repl\.co$',
-        r'^https?://.*\.replit\.dev$',
-        r'^https?://.*\.repl\.it$'
-    ]
-    return any(re.match(pattern, origin) for pattern in replit_patterns)
-
-# Update CORS configuration for production
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",  # Will be filtered by Socket.IO
-        "methods": ["GET", "POST"],
-        "allow_headers": ["Content-Type"],
-        "supports_credentials": True
-    }
-})
-
-# Configure SocketIO with enhanced production settings
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",  # Will be filtered by our custom validation
-    async_mode='eventlet',
-    ping_timeout=120,  # Increased to 120 seconds
-    ping_interval=15,  # Reduced to 15 seconds
-    manage_session=False,
-    logger=True,
-    engineio_logger=True,
-    transports=['websocket', 'polling'],
-    always_connect=True,
-    reconnection=True,
-    reconnection_attempts=5,
-    reconnection_delay=2000,
-    reconnection_delay_max=10000,
-    transport_options={
-        'websocket': {
-            'ping_timeout': 120,
-            'ping_interval': 15,
-            'max_payload_length': 10 * 1024 * 1024  # 10MB
-        },
-        'polling': {
-            'timeout': 60
-        }
-    },
-    max_http_buffer_size=10 * 1024 * 1024,  # 10MB
-    http_compression=True,
-    heartbeat_interval=15,
-    heartbeat_timeout=120,
-    close_timeout=60,
-    ssl_verify=False if os.environ.get('REPL_SLUG') else True
-)
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
@@ -86,10 +30,8 @@ MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -97,8 +39,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Global variables for sync state management
 sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
 sync_lock = threading.Lock()
-active_connections = set()
-connection_timestamps = {}
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -127,8 +67,7 @@ def allowed_file(filename):
 def emit_sync_progress(data, room=None):
     with app.app_context():
         try:
-            if room in active_connections:  # Only emit if connection is still active
-                socketio.emit('sync_progress', data, room=room)
+            socketio.emit('sync_progress', data, room=room)
         except Exception as e:
             logging.error(f"Error emitting sync progress: {str(e)}")
 
@@ -140,9 +79,6 @@ def process_sync_queue():
                 break
 
             room = sync_data.get('room')
-            if room not in active_connections:  # Skip if client disconnected
-                continue
-
             emit_sync_progress({
                 'status': 'processing',
                 'message': 'Starting sync process...'
@@ -190,9 +126,6 @@ def process_sync_queue():
                 }, room)
 
                 for i, contact in enumerate(linkedin_contacts, 1):
-                    if room not in active_connections:  # Stop if client disconnected
-                        break
-
                     retry_count = 0
                     while retry_count < MAX_RETRIES:
                         try:
@@ -221,26 +154,24 @@ def process_sync_queue():
                                 'message': f'Retry {retry_count}/{MAX_RETRIES} for contact {contact.get("Name", "Unknown")}'
                             }, room)
 
-                if room in active_connections:  # Only emit completion if client still connected
-                    emit_sync_progress({
-                        'status': 'completed',
-                        'total': total_contacts,
-                        'current': total_contacts,
-                        'message': 'Sync completed successfully!'
-                    }, room)
+                emit_sync_progress({
+                    'status': 'completed',
+                    'total': total_contacts,
+                    'current': total_contacts,
+                    'message': 'Sync completed successfully!'
+                }, room)
 
             except Exception as e:
-                if room in active_connections:  # Only emit error if client still connected
-                    error_type = (
-                        SyncError.NOTION_API if isinstance(e, APIResponseError)
-                        else SyncError.NETWORK
-                    )
-                    emit_sync_progress({
-                        'status': 'error',
-                        'error_type': error_type,
-                        'message': str(e),
-                        'details': traceback.format_exc()
-                    }, room)
+                error_type = (
+                    SyncError.NOTION_API if isinstance(e, APIResponseError)
+                    else SyncError.NETWORK
+                )
+                emit_sync_progress({
+                    'status': 'error',
+                    'error_type': error_type,
+                    'message': str(e),
+                    'details': traceback.format_exc()
+                }, room)
             finally:
                 # Clean up the uploaded file
                 if os.path.exists(filepath):
@@ -254,50 +185,13 @@ def process_sync_queue():
 sync_thread = threading.Thread(target=process_sync_queue, daemon=True)
 sync_thread.start()
 
-def check_connection_health():
-    """Monitor connection health and clean up stale connections"""
-    current_time = time()
-    stale_connections = set()
-    
-    for sid in active_connections:
-        if current_time - connection_timestamps.get(sid, 0) > 120:  # 2 minutes timeout
-            stale_connections.add(sid)
-    
-    for sid in stale_connections:
-        active_connections.discard(sid)
-        connection_timestamps.pop(sid, None)
-        logging.warning(f"Removed stale connection: {sid}")
-
 @socketio.on('connect')
 def handle_connect():
-    origin = request.headers.get('Origin', '')
-    if not is_valid_replit_domain(origin):
-        logging.warning(f"Rejected connection from unauthorized origin: {origin}")
-        disconnect()
-        return False
-    
-    active_connections.add(request.sid)
-    connection_timestamps[request.sid] = time()
     logging.info(f"Client connected: {request.sid}")
-    return True
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    active_connections.discard(request.sid)
-    connection_timestamps.pop(request.sid, None)
     logging.info(f"Client disconnected: {request.sid}")
-
-@socketio.on('ping')
-def handle_ping():
-    """Handle client ping to keep connection alive"""
-    if request.sid in active_connections:
-        connection_timestamps[request.sid] = time()
-        return {'status': 'ok'}
-
-@socketio.on_error_default
-def default_error_handler(e):
-    logging.error(f"SocketIO error: {str(e)}\n{traceback.format_exc()}")
-    return {"error": str(e)}
 
 @app.route('/')
 def home():
@@ -314,9 +208,6 @@ def serve_notion_image():
 @app.route('/sync', methods=['POST'])
 def sync_contacts():
     try:
-        # Check connection health before processing new request
-        check_connection_health()
-        
         # Check if queue is full
         if sync_queue.full():
             return error_response(
@@ -327,11 +218,11 @@ def sync_contacts():
 
         # Get socket_id from form data
         socket_id = request.form.get('socket_id')
-        if not socket_id or socket_id not in active_connections:
+        if not socket_id:
             return error_response(
                 error_type=SyncError.VALIDATION,
-                message="Invalid or missing socket ID",
-                details="Socket connection not established or expired"
+                message="Missing socket ID",
+                details="Socket connection not established"
             )
 
         # Validate file upload
@@ -395,11 +286,4 @@ def sync_contacts():
         )
 
 if __name__ == '__main__':
-    socketio.run(
-        app,
-        host='0.0.0.0',
-        port=3000,
-        debug=False,  # Disable debug mode in production
-        allow_unsafe_werkzeug=True,  # Required for eventlet
-        log_output=True
-    )
+    socketio.run(app, host='0.0.0.0', port=3000, debug=True)
