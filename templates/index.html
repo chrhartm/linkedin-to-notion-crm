@@ -122,9 +122,10 @@
             'TIMEOUT_ERROR': true
         };
 
-        document.getElementById('syncForm').addEventListener('submit', function(e) {
+        document.getElementById('syncForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            startSync(new FormData(this));
+            const formData = new FormData(this);
+            await startSync(formData);
         });
 
         async function startSync(formData) {
@@ -149,7 +150,7 @@
                 if (data.status === 'success') {
                     pollingStartTime = Date.now();
                     currentRetryCount = 0;
-                    pollProgress();
+                    await pollProgress();
                 } else {
                     throw new Error(data.message || 'Unknown error occurred');
                 }
@@ -190,7 +191,7 @@
             
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
-            progressBar.classList.remove('bg-danger', 'bg-warning');
+            progressBar.classList.remove('bg-danger', 'bg-warning', 'bg-success');
             progressBar.classList.add('bg-primary');
             statusText.className = 'text-muted';
             statusText.textContent = 'Starting sync process...';
@@ -278,7 +279,7 @@
                     statusText.className = 'text-success';
                     syncButton.disabled = false;
                     errorDetails.style.display = 'none';
-                    progressBar.classList.remove('bg-warning');
+                    progressBar.classList.remove('bg-primary', 'bg-warning');
                     progressBar.classList.add('bg-success');
                 }
             }
@@ -291,7 +292,7 @@
             const errorDetails = document.getElementById('errorDetails');
             const retryButton = errorDetails.querySelector('.retry-button');
 
-            progressBar.classList.remove('bg-primary', 'bg-warning');
+            progressBar.classList.remove('bg-primary', 'bg-warning', 'bg-success');
             progressBar.classList.add('bg-danger');
             statusText.className = 'text-danger';
             
@@ -304,11 +305,11 @@
             if (error.retryable && currentRetryCount < MAX_RETRIES) {
                 retryButton.style.display = 'block';
                 retryButton.textContent = `Retry (${currentRetryCount + 1}/${MAX_RETRIES})`;
-                retryButton.onclick = () => {
+                retryButton.onclick = async () => {
                     currentRetryCount++;
                     if (currentRetryCount < MAX_RETRIES) {
                         const formData = new FormData(document.getElementById('syncForm'));
-                        startSync(formData);
+                        await startSync(formData);
                     } else {
                         retryButton.style.display = 'none';
                         handleError({
@@ -333,12 +334,24 @@
 
         window.addEventListener('unhandledrejection', function(event) {
             console.error('Unhandled promise rejection:', event.reason);
-            handleError({
-                type: 'NETWORK_ERROR',
-                message: 'Unexpected error occurred',
-                details: event.reason.message || 'An unexpected error occurred',
-                retryable: true
-            });
+            if (event.reason instanceof Error) {
+                handleError({
+                    type: 'NETWORK_ERROR',
+                    message: event.reason.message || 'Unexpected error occurred',
+                    details: 'A network error occurred while communicating with the server',
+                    retryable: true
+                });
+            } else if (typeof event.reason === 'object') {
+                handleError(formatErrorMessage(event.reason));
+            } else {
+                handleError({
+                    type: 'NETWORK_ERROR',
+                    message: 'Unexpected error occurred',
+                    details: 'An unknown error occurred',
+                    retryable: true
+                });
+            }
+            event.preventDefault();
         });
     </script>
 </body>
