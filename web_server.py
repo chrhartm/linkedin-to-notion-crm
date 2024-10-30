@@ -9,6 +9,7 @@ import logging
 from functools import wraps
 from time import time
 from notion_client.errors import APIResponseError
+import traceback
 
 app = Flask(__name__, static_folder='static')
 CORS(app)  # Enable CORS for all routes
@@ -16,6 +17,11 @@ app.secret_key = os.urandom(24)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
 SYNC_TIMEOUT = 300  # 5 minutes timeout
+MAX_RETRIES = 3  # Maximum number of retries for failed operations
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -26,7 +32,8 @@ sync_progress = {
     'current': 0,
     'status': 'idle',
     'last_update': time(),
-    'error': None
+    'error': None,
+    'retry_count': 0
 }
 
 class SyncError:
@@ -36,16 +43,18 @@ class SyncError:
     NETWORK = "NETWORK_ERROR"
     TIMEOUT = "TIMEOUT_ERROR"
     VALIDATION = "VALIDATION_ERROR"
+    RETRY_FAILED = "RETRY_FAILED"
 
 def error_response(error_type, message, details=None, status_code=400):
-    response = {
+    error_data = {
         'status': 'error',
         'error_type': error_type,
         'message': message,
     }
     if details:
-        response['details'] = details
-    return jsonify(response), status_code
+        error_data['details'] = details
+    logging.error(f"Error response: {error_type} - {message} - {details}")
+    return jsonify(error_data), status_code
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -55,14 +64,19 @@ def error_handler(f):
     def decorated_function(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except Exception as e:
-            error_type = SyncError.NETWORK
-            if isinstance(e, APIResponseError):
-                error_type = SyncError.NOTION_API
-            logging.error(f"Error in {f.__name__}: {str(e)}")
+        except APIResponseError as e:
+            logging.error(f"Notion API Error in {f.__name__}: {str(e)}\n{traceback.format_exc()}")
             return error_response(
-                error_type=error_type,
-                message=f"An error occurred during operation",
+                error_type=SyncError.NOTION_API,
+                message="Error connecting to Notion API",
+                details=str(e),
+                status_code=400
+            )
+        except Exception as e:
+            logging.error(f"Unexpected error in {f.__name__}: {str(e)}\n{traceback.format_exc()}")
+            return error_response(
+                error_type=SyncError.NETWORK,
+                message="An unexpected error occurred",
                 details=str(e),
                 status_code=500
             )
@@ -92,7 +106,8 @@ def sync_contacts():
         'current': 0,
         'status': 'starting',
         'last_update': time(),
-        'error': None
+        'error': None,
+        'retry_count': 0
     }
 
     # Validate file upload
@@ -146,7 +161,14 @@ def sync_contacts():
             # Parse contacts first to get total count
             try:
                 contacts = linkedin_parser.parse_linkedin_export(filepath)
+                if not contacts:
+                    return error_response(
+                        error_type=SyncError.FILE_PROCESSING,
+                        message='No contacts found in the file',
+                        details='The LinkedIn export file appears to be empty'
+                    )
             except Exception as e:
+                logging.error(f"File processing error: {str(e)}\n{traceback.format_exc()}")
                 return error_response(
                     error_type=SyncError.FILE_PROCESSING,
                     message='Error processing LinkedIn export file',
@@ -156,37 +178,55 @@ def sync_contacts():
             sync_progress['total'] = len(contacts)
             sync_progress['status'] = 'syncing'
 
-            # Sync contacts with progress tracking
+            # Sync contacts with progress tracking and retry logic
             for i, contact in enumerate(contacts):
-                try:
-                    notion_manager.add_contact(contact)
-                    sync_progress['current'] = i + 1
-                    sync_progress['last_update'] = time()
-                except APIResponseError as e:
-                    sync_progress['error'] = {
-                        'error_type': SyncError.NOTION_API,
-                        'message': f"Error syncing contact {contact.get('Name', 'Unknown')}",
-                        'details': str(e)
-                    }
-                    logging.error(sync_progress['error'])
-                except Exception as e:
-                    sync_progress['error'] = {
-                        'error_type': SyncError.NETWORK,
-                        'message': f"Error syncing contact {contact.get('Name', 'Unknown')}",
-                        'details': str(e)
-                    }
-                    logging.error(sync_progress['error'])
+                retry_count = 0
+                while retry_count < MAX_RETRIES:
+                    try:
+                        notion_manager.add_contact(contact)
+                        sync_progress['current'] = i + 1
+                        sync_progress['last_update'] = time()
+                        break
+                    except APIResponseError as e:
+                        retry_count += 1
+                        if retry_count >= MAX_RETRIES:
+                            sync_progress['error'] = {
+                                'error_type': SyncError.NOTION_API,
+                                'message': f"Error syncing contact {contact.get('Name', 'Unknown')} after {MAX_RETRIES} retries",
+                                'details': str(e)
+                            }
+                            logging.error(f"Failed to sync contact after {MAX_RETRIES} retries: {str(e)}")
+                        else:
+                            logging.warning(f"Retry {retry_count} for contact {contact.get('Name', 'Unknown')}")
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count >= MAX_RETRIES:
+                            sync_progress['error'] = {
+                                'error_type': SyncError.NETWORK,
+                                'message': f"Error syncing contact {contact.get('Name', 'Unknown')} after {MAX_RETRIES} retries",
+                                'details': str(e)
+                            }
+                            logging.error(f"Failed to sync contact after {MAX_RETRIES} retries: {str(e)}")
+                        else:
+                            logging.warning(f"Retry {retry_count} for contact {contact.get('Name', 'Unknown')}")
 
             if not sync_progress['error']:
                 sync_progress['status'] = 'completed'
 
         except APIResponseError as e:
+            logging.error(f"Notion API Error: {str(e)}\n{traceback.format_exc()}")
             return error_response(
                 error_type=SyncError.NOTION_API,
                 message='Error connecting to Notion API',
                 details=str(e)
             )
-
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
+            return error_response(
+                error_type=SyncError.NETWORK,
+                message='Unexpected error during sync process',
+                details=str(e)
+            )
         finally:
             # Clean up uploaded file
             if os.path.exists(filepath):
@@ -198,7 +238,7 @@ def sync_contacts():
         })
 
     except Exception as e:
-        logging.error(f"Error syncing contacts: {str(e)}")
+        logging.error(f"Error in sync process: {str(e)}\n{traceback.format_exc()}")
         sync_progress['status'] = 'error'
         sync_progress['error'] = {
             'error_type': SyncError.NETWORK,
@@ -214,26 +254,38 @@ def sync_contacts():
 @app.route('/sync/progress')
 @error_handler
 def get_sync_progress():
-    # Check for timeout
-    if sync_progress['status'] in ['starting', 'syncing']:
-        if time() - sync_progress['last_update'] > SYNC_TIMEOUT:
-            sync_progress['status'] = 'error'
-            sync_progress['error'] = {
-                'error_type': SyncError.TIMEOUT,
-                'message': 'Sync operation timed out',
-                'details': 'The operation took longer than the maximum allowed time'
-            }
+    global sync_progress
     
-    response = {
-        'status': sync_progress['status'],
-        'total': sync_progress['total'],
-        'current': sync_progress['current'],
-    }
-    
-    if sync_progress['error']:
-        response.update(sync_progress['error'])
-    
-    return jsonify(response)
+    try:
+        # Check for timeout
+        if sync_progress['status'] in ['starting', 'syncing']:
+            if time() - sync_progress['last_update'] > SYNC_TIMEOUT:
+                sync_progress['status'] = 'error'
+                sync_progress['error'] = {
+                    'error_type': SyncError.TIMEOUT,
+                    'message': 'Sync operation timed out',
+                    'details': 'The operation took longer than the maximum allowed time'
+                }
+                logging.error("Sync operation timed out")
+        
+        response = {
+            'status': sync_progress['status'],
+            'total': sync_progress['total'],
+            'current': sync_progress['current'],
+        }
+        
+        if sync_progress['error']:
+            response.update(sync_progress['error'])
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logging.error(f"Error fetching progress: {str(e)}\n{traceback.format_exc()}")
+        return error_response(
+            error_type=SyncError.NETWORK,
+            message='Error fetching sync progress',
+            details=str(e)
+        )
 
 @app.route('/api/contacts')
 @error_handler
