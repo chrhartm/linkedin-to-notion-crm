@@ -111,8 +111,22 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Initialize Socket.IO
-        const socket = io();
+        const currentHost = window.location.hostname;
+        const currentProtocol = window.location.protocol;
+        
+        const socket = io({
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+            autoConnect: true,
+            transports: ['websocket', 'polling'],
+            withCredentials: true,
+            path: '/socket.io',
+            secure: currentProtocol === 'https:'
+        });
+
         const connectionStatus = document.getElementById('connectionStatus');
         const progressSection = document.getElementById('progressSection');
         const syncProgress = document.getElementById('syncProgress');
@@ -122,11 +136,17 @@
         const syncForm = document.getElementById('syncForm');
         const syncButton = document.getElementById('syncButton');
 
-        // Socket connection handlers
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        let isReconnecting = false;
+
         socket.on('connect', () => {
             document.getElementById('socket_id').value = socket.id;
             connectionStatus.className = 'alert alert-success';
             connectionStatus.textContent = 'Connected to server';
+            connectionStatus.style.display = 'block';
+            reconnectAttempts = 0;
+            isReconnecting = false;
             setTimeout(() => {
                 connectionStatus.style.display = 'none';
             }, 3000);
@@ -136,15 +156,19 @@
             connectionStatus.style.display = 'block';
             connectionStatus.className = 'alert alert-warning';
             connectionStatus.textContent = 'Disconnected from server. Attempting to reconnect...';
+            handleDisconnect();
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            handleConnectionError(error);
         });
 
         socket.on('error', (error) => {
-            connectionStatus.style.display = 'block';
-            connectionStatus.className = 'alert alert-danger';
-            connectionStatus.textContent = 'Connection error: ' + error;
+            console.error('Socket error:', error);
+            handleConnectionError(error);
         });
 
-        // Progress update handler
         socket.on('sync_progress', (data) => {
             progressSection.style.display = 'block';
             
@@ -188,9 +212,17 @@
             }
         });
 
-        // Form submission handler
         syncForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            
+            if (!socket.connected) {
+                handleError({
+                    type: 'CONNECTION_ERROR',
+                    message: 'Not connected to server',
+                    details: 'Please wait for connection to be established'
+                });
+                return;
+            }
             
             resetProgress();
             progressSection.style.display = 'block';
@@ -243,6 +275,35 @@
             syncButton.disabled = false;
         }
 
+        function handleDisconnect() {
+            if (isReconnecting) return;
+            
+            if (reconnectAttempts < maxReconnectAttempts) {
+                isReconnecting = true;
+                reconnectAttempts++;
+                setTimeout(() => {
+                    if (!socket.connected) {
+                        socket.connect();
+                        isReconnecting = false;
+                    }
+                }, Math.min(1000 * reconnectAttempts, 5000));
+            } else {
+                connectionStatus.className = 'alert alert-danger';
+                connectionStatus.textContent = 'Connection lost. Please refresh the page to try again.';
+            }
+        }
+
+        function handleConnectionError(error) {
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                connectionStatus.className = 'alert alert-warning';
+                connectionStatus.textContent = `Connection attempt ${reconnectAttempts}/${maxReconnectAttempts} failed. Retrying...`;
+            } else {
+                connectionStatus.className = 'alert alert-danger';
+                connectionStatus.textContent = 'Failed to connect to server. Please refresh the page to try again.';
+            }
+        }
+
         function formatErrorMessage(error) {
             if (error.error_type) {
                 return {
@@ -258,7 +319,6 @@
             };
         }
 
-        // Global error handler for unhandled promise rejections
         window.addEventListener('unhandledrejection', (event) => {
             console.error('Unhandled promise rejection:', event.reason);
             handleError(formatErrorMessage(event.reason));

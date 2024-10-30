@@ -4,7 +4,7 @@ eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request, flash, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, disconnect
 from werkzeug.utils import secure_filename
 from notion_manager import NotionManager
 from linkedin_parser import LinkedInParser
@@ -17,11 +17,45 @@ from notion_client.errors import APIResponseError
 import traceback
 import queue
 import threading
+import ssl
+import re
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Function to validate Replit domains
+def is_valid_replit_domain(origin):
+    if not origin:
+        return False
+    replit_patterns = [
+        r'^https?://.*\.repl\.co$',
+        r'^https?://.*\.replit\.dev$',
+        r'^https?://.*\.repl\.it$'
+    ]
+    return any(re.match(pattern, origin) for pattern in replit_patterns)
+
+# Update CORS configuration for production
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",  # Will be filtered by Socket.IO
+        "methods": ["GET", "POST"],
+        "allow_headers": ["Content-Type"],
+        "supports_credentials": True
+    }
+})
+
+# Configure SocketIO with production settings
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",  # Will be filtered by our custom validation
+    async_mode='eventlet',
+    ping_timeout=60,
+    ping_interval=25,
+    manage_session=False,
+    logger=True,
+    engineio_logger=True
+)
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
@@ -30,8 +64,10 @@ MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -39,6 +75,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Global variables for sync state management
 sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
 sync_lock = threading.Lock()
+active_connections = set()
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -67,7 +104,8 @@ def allowed_file(filename):
 def emit_sync_progress(data, room=None):
     with app.app_context():
         try:
-            socketio.emit('sync_progress', data, room=room)
+            if room in active_connections:  # Only emit if connection is still active
+                socketio.emit('sync_progress', data, room=room)
         except Exception as e:
             logging.error(f"Error emitting sync progress: {str(e)}")
 
@@ -79,6 +117,9 @@ def process_sync_queue():
                 break
 
             room = sync_data.get('room')
+            if room not in active_connections:  # Skip if client disconnected
+                continue
+
             emit_sync_progress({
                 'status': 'processing',
                 'message': 'Starting sync process...'
@@ -126,6 +167,9 @@ def process_sync_queue():
                 }, room)
 
                 for i, contact in enumerate(linkedin_contacts, 1):
+                    if room not in active_connections:  # Stop if client disconnected
+                        break
+
                     retry_count = 0
                     while retry_count < MAX_RETRIES:
                         try:
@@ -154,24 +198,26 @@ def process_sync_queue():
                                 'message': f'Retry {retry_count}/{MAX_RETRIES} for contact {contact.get("Name", "Unknown")}'
                             }, room)
 
-                emit_sync_progress({
-                    'status': 'completed',
-                    'total': total_contacts,
-                    'current': total_contacts,
-                    'message': 'Sync completed successfully!'
-                }, room)
+                if room in active_connections:  # Only emit completion if client still connected
+                    emit_sync_progress({
+                        'status': 'completed',
+                        'total': total_contacts,
+                        'current': total_contacts,
+                        'message': 'Sync completed successfully!'
+                    }, room)
 
             except Exception as e:
-                error_type = (
-                    SyncError.NOTION_API if isinstance(e, APIResponseError)
-                    else SyncError.NETWORK
-                )
-                emit_sync_progress({
-                    'status': 'error',
-                    'error_type': error_type,
-                    'message': str(e),
-                    'details': traceback.format_exc()
-                }, room)
+                if room in active_connections:  # Only emit error if client still connected
+                    error_type = (
+                        SyncError.NOTION_API if isinstance(e, APIResponseError)
+                        else SyncError.NETWORK
+                    )
+                    emit_sync_progress({
+                        'status': 'error',
+                        'error_type': error_type,
+                        'message': str(e),
+                        'details': traceback.format_exc()
+                    }, room)
             finally:
                 # Clean up the uploaded file
                 if os.path.exists(filepath):
@@ -187,11 +233,23 @@ sync_thread.start()
 
 @socketio.on('connect')
 def handle_connect():
+    origin = request.headers.get('Origin', '')
+    if not is_valid_replit_domain(origin):
+        logging.warning(f"Rejected connection from unauthorized origin: {origin}")
+        disconnect()
+        return
+    active_connections.add(request.sid)
     logging.info(f"Client connected: {request.sid}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
+    active_connections.discard(request.sid)
     logging.info(f"Client disconnected: {request.sid}")
+
+@socketio.on_error_default
+def default_error_handler(e):
+    logging.error(f"SocketIO error: {str(e)}\n{traceback.format_exc()}")
+    return {"error": str(e)}
 
 @app.route('/')
 def home():
@@ -286,4 +344,11 @@ def sync_contacts():
         )
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=3000, debug=True)
+    socketio.run(
+        app,
+        host='0.0.0.0',
+        port=3000,
+        debug=False,  # Disable debug mode in production
+        allow_unsafe_werkzeug=True,  # Required for eventlet
+        log_output=True
+    )
