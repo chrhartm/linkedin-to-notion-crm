@@ -4,7 +4,7 @@ eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify, request, flash, send_from_directory
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit, disconnect
+from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 from notion_manager import NotionManager
 from linkedin_parser import LinkedInParser
@@ -17,102 +17,28 @@ from notion_client.errors import APIResponseError
 import traceback
 import queue
 import threading
-import json
-from dataclasses import dataclass, asdict
-from typing import Optional, Dict, Any
-
-# Configure logging for engine.io
-logging.getLogger('engineio').setLevel(logging.DEBUG)
-logging.getLogger('engineio.server').setLevel(logging.DEBUG)
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
 CORS(app)
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode='eventlet',
-    ping_timeout=60,
-    ping_interval=25,
-    engineio_logger=True,
-    logger=True,
-    reconnection=True,
-    reconnection_attempts=10,
-    reconnection_delay=1000,
-    reconnection_delay_max=30000
-)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
 SYNC_TIMEOUT = 600  # 10 minutes timeout
 MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
-HEARTBEAT_INTERVAL = 25  # seconds
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@dataclass
-class SyncState:
-    status: str
-    message: str
-    total: int = 0
-    current: int = 0
-    contact: Optional[str] = None
-    error_type: Optional[str] = None
-    error_details: Optional[str] = None
-
-class SessionManager:
-    def __init__(self):
-        self.active_sessions: Dict[str, Dict[str, Any]] = {}
-        self.sync_states: Dict[str, SyncState] = {}
-        self._lock = threading.Lock()
-
-    def create_session(self, sid: str) -> None:
-        with self._lock:
-            self.active_sessions[sid] = {
-                'connected': True,
-                'last_heartbeat': time(),
-                'sync_in_progress': False
-            }
-
-    def remove_session(self, sid: str) -> None:
-        with self._lock:
-            self.active_sessions.pop(sid, None)
-            self.sync_states.pop(sid, None)
-
-    def update_heartbeat(self, sid: str) -> None:
-        with self._lock:
-            if sid in self.active_sessions:
-                self.active_sessions[sid]['last_heartbeat'] = time()
-
-    def set_sync_state(self, sid: str, state: SyncState) -> None:
-        with self._lock:
-            self.sync_states[sid] = state
-            if sid in self.active_sessions:
-                self.active_sessions[sid]['sync_in_progress'] = True
-
-    def get_sync_state(self, sid: str) -> Optional[SyncState]:
-        with self._lock:
-            return self.sync_states.get(sid)
-
-    def is_session_active(self, sid: str) -> bool:
-        with self._lock:
-            session = self.active_sessions.get(sid)
-            if not session:
-                return False
-            # Check if session hasn't timed out
-            return time() - session['last_heartbeat'] < HEARTBEAT_INTERVAL * 3
-
 # Global variables for sync state management
-session_manager = SessionManager()
 sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+sync_lock = threading.Lock()
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -138,21 +64,10 @@ def error_response(error_type, message, details=None, status_code=400):
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def emit_sync_progress(data: dict, room: Optional[str] = None) -> None:
+def emit_sync_progress(data, room=None):
     with app.app_context():
         try:
-            if room and session_manager.is_session_active(room):
-                state = SyncState(
-                    status=data['status'],
-                    message=data.get('message', ''),
-                    total=data.get('total', 0),
-                    current=data.get('current', 0),
-                    contact=data.get('contact'),
-                    error_type=data.get('error_type'),
-                    error_details=data.get('details')
-                )
-                session_manager.set_sync_state(room, state)
-                socketio.emit('sync_progress', data, room=room)
+            socketio.emit('sync_progress', data, room=room)
         except Exception as e:
             logging.error(f"Error emitting sync progress: {str(e)}")
 
@@ -164,9 +79,6 @@ def process_sync_queue():
                 break
 
             room = sync_data.get('room')
-            if not room or not session_manager.is_session_active(room):
-                continue
-
             emit_sync_progress({
                 'status': 'processing',
                 'message': 'Starting sync process...'
@@ -189,23 +101,23 @@ def process_sync_queue():
                     'status': 'processing',
                     'message': 'Parsing LinkedIn export file...'
                 }, room)
-
+                
                 linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
                 total_contacts = len(linkedin_contacts)
-
+                
                 # Get existing contacts
                 emit_sync_progress({
                     'status': 'processing',
                     'message': 'Fetching existing contacts...'
                 }, room)
-
+                
                 existing_contacts = notion_manager.get_all_contacts()
                 existing_urls = {
                     contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
                     for contact in existing_contacts
                     if contact['properties'].get('LinkedIn URL', {}).get('url')
                 }
-
+                
                 emit_sync_progress({
                     'status': 'processing',
                     'total': total_contacts,
@@ -219,12 +131,12 @@ def process_sync_queue():
                         try:
                             linkedin_url = contact.get('LinkedIn URL')
                             action = 'Updating' if linkedin_url in existing_urls else 'Adding'
-
+                            
                             if linkedin_url in existing_urls:
                                 notion_manager.update_contact(existing_urls[linkedin_url], contact)
                             else:
                                 notion_manager.add_contact(contact)
-
+                            
                             emit_sync_progress({
                                 'status': 'processing',
                                 'total': total_contacts,
@@ -241,7 +153,6 @@ def process_sync_queue():
                                 'status': 'retrying',
                                 'message': f'Retry {retry_count}/{MAX_RETRIES} for contact {contact.get("Name", "Unknown")}'
                             }, room)
-                            eventlet.sleep(2 ** retry_count)  # Exponential backoff
 
                 emit_sync_progress({
                     'status': 'completed',
@@ -276,30 +187,11 @@ sync_thread.start()
 
 @socketio.on('connect')
 def handle_connect():
-    sid = request.sid
-    session_manager.create_session(sid)
-    logging.info(f"Client connected: {sid}")
+    logging.info(f"Client connected: {request.sid}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    sid = request.sid
-    session_manager.remove_session(sid)
-    logging.info(f"Client disconnected: {sid}")
-
-@socketio.on('heartbeat')
-def handle_heartbeat():
-    sid = request.sid
-    session_manager.update_heartbeat(sid)
-    state = session_manager.get_sync_state(sid)
-    if state:
-        emit('sync_progress', asdict(state))
-
-@socketio.on('request_state')
-def handle_state_request():
-    sid = request.sid
-    state = session_manager.get_sync_state(sid)
-    if state:
-        emit('sync_progress', asdict(state))
+    logging.info(f"Client disconnected: {request.sid}")
 
 @app.route('/')
 def home():
@@ -340,7 +232,7 @@ def sync_contacts():
                 message='No file uploaded',
                 details='Please select a LinkedIn connections export file'
             )
-
+        
         file = request.files['linkedin_file']
         if file.filename == '':
             return error_response(
@@ -348,7 +240,7 @@ def sync_contacts():
                 message='No file selected',
                 details='Please choose a file before uploading'
             )
-
+        
         if not allowed_file(file.filename):
             return error_response(
                 error_type=SyncError.VALIDATION,
@@ -364,7 +256,7 @@ def sync_contacts():
         # Validate Notion credentials
         notion_token = request.form.get('notion_token')
         notion_database_id = request.form.get('notion_database_id')
-
+        
         if not notion_token or not notion_database_id:
             return error_response(
                 error_type=SyncError.VALIDATION,

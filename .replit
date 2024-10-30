@@ -46,7 +46,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 web_server.py"
+args = "python web_server.py"
 waitForPort = 3000
 
 [[workflows.workflow]]
@@ -64,8 +64,7 @@ task = "shell.exec"
 args = "python generate_howto_images.py"
 
 [deployment]
-run = ["sh", "-c", "python3 web_server.py"]
-deploymentTarget = "cloudrun"
+run = ["sh", "-c", "python main.py"]
 
 [[ports]]
 localPort = 3000

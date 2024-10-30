@@ -16,16 +16,6 @@
             Connecting to server...
         </div>
 
-        <!-- Error Boundary -->
-        <div id="errorBoundary" class="alert alert-danger" style="display: none;">
-            <h5 class="alert-heading">Application Error</h5>
-            <p class="mb-0"></p>
-            <hr>
-            <button type="button" class="btn btn-outline-danger btn-sm" onclick="window.location.reload()">
-                Reload Application
-            </button>
-        </div>
-
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Sync LinkedIn Contacts</h5>
@@ -121,664 +111,157 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        class SyncState {
-            constructor() {
-                this.reset();
-            }
-
-            reset() {
-                this.status = 'idle';
-                this.message = '';
-                this.total = 0;
-                this.current = 0;
-                this.contact = null;
-                this.errorType = null;
-                this.errorDetails = null;
-            }
-
-            update(data) {
-                this.status = data.status;
-                this.message = data.message || '';
-                this.total = data.total || 0;
-                this.current = data.current || 0;
-                this.contact = data.contact || null;
-                this.errorType = data.error_type || null;
-                this.errorDetails = data.details || null;
-            }
-
-            isInProgress() {
-                return this.status === 'processing' || this.status === 'retrying';
-            }
-
-            serialize() {
-                return JSON.stringify({
-                    status: this.status,
-                    message: this.message,
-                    total: this.total,
-                    current: this.current,
-                    contact: this.contact,
-                    errorType: this.errorType,
-                    errorDetails: this.errorDetails
-                });
-            }
-
-            static deserialize(data) {
-                const state = new SyncState();
-                if (typeof data === 'string') {
-                    try {
-                        const parsed = JSON.parse(data);
-                        state.update(parsed);
-                    } catch (e) {
-                        console.error('Error deserializing state:', e);
-                    }
-                } else if (data && typeof data === 'object') {
-                    state.update(data);
-                }
-                return state;
-            }
-        }
-
-        class DOMElementManager {
-            constructor() {
-                this.elements = {};
-                this.initialized = false;
-                this.initializationPromise = null;
-                this.errorBoundary = null;
-                this.retryCount = 0;
-                this.maxRetries = 3;
-            }
-
-            async initialize(retries = 5, delay = 100) {
-                if (this.initialized) return this.elements;
-                
-                if (this.initializationPromise) {
-                    return this.initializationPromise;
-                }
-
-                this.initializationPromise = new Promise(async (resolve, reject) => {
-                    try {
-                        // Initialize error boundary first
-                        this.errorBoundary = document.getElementById('errorBoundary');
-                        
-                        const elementIds = [
-                            'connectionStatus',
-                            'progressSection',
-                            'syncProgress',
-                            'syncStatus',
-                            'currentContact',
-                            'errorDetails',
-                            'syncForm',
-                            'syncButton',
-                            'socket_id',
-                            'errorBoundary'
-                        ];
-
-                        const elements = {};
-                        const missingElements = [];
-
-                        for (const id of elementIds) {
-                            const element = document.getElementById(id);
-                            if (element) {
-                                elements[id] = element;
-                            } else {
-                                missingElements.push(id);
-                            }
-                        }
-
-                        if (missingElements.length > 0) {
-                            throw new Error(`Missing DOM elements: ${missingElements.join(', ')}`);
-                        }
-
-                        this.elements = elements;
-                        this.initialized = true;
-                        resolve(this.elements);
-                    } catch (error) {
-                        this.showError('Initialization Error', error.message);
-                        reject(error);
-                    }
-                });
-
-                return this.initializationPromise;
-            }
-
-            showError(title, message) {
-                if (this.errorBoundary) {
-                    this.errorBoundary.querySelector('.alert-heading').textContent = title;
-                    this.errorBoundary.querySelector('p').textContent = message;
-                    this.errorBoundary.style.display = 'block';
-                } else {
-                    console.error('Error boundary not found:', title, message);
-                }
-            }
-
-            getElement(id) {
-                if (!this.initialized) {
-                    throw new Error('DOM Elements not initialized');
-                }
-                const element = this.elements[id];
-                if (!element) {
-                    throw new Error(`Element with id "${id}" not found`);
-                }
-                return element;
-            }
-
-            safeUpdateElement(id, updates) {
-                try {
-                    const element = this.getElement(id);
-                    if (!element) return false;
-
-                    Object.entries(updates).forEach(([key, value]) => {
-                        try {
-                            if (key === 'classList' && value) {
-                                if (value.add && Array.isArray(value.add)) {
-                                    element.classList.add(...value.add);
-                                }
-                                if (value.remove && Array.isArray(value.remove)) {
-                                    element.classList.remove(...value.remove);
-                                }
-                            } else if (key === 'style' && value && typeof value === 'object') {
-                                Object.entries(value).forEach(([prop, val]) => {
-                                    if (val !== undefined && val !== null) {
-                                        element.style[prop] = val;
-                                    }
-                                });
-                            } else if (value !== undefined && value !== null) {
-                                element[key] = value;
-                            }
-                        } catch (error) {
-                            console.error(`Error updating ${key} on element ${id}:`, error);
-                            throw error;
-                        }
-                    });
-                    return true;
-                } catch (error) {
-                    this.retryCount++;
-                    console.error(`Error updating element ${id} (attempt ${this.retryCount}):`, error);
-                    
-                    if (this.retryCount >= this.maxRetries) {
-                        this.showError('UI Update Error', 
-                            `Failed to update interface after ${this.maxRetries} attempts. Please refresh the page.`);
-                        return false;
-                    }
-                    
-                    // Schedule retry with exponential backoff
-                    setTimeout(() => {
-                        this.safeUpdateElement(id, updates);
-                    }, Math.pow(2, this.retryCount) * 100);
-                    
-                    return false;
-                }
-            }
-
-            resetRetryCount() {
-                this.retryCount = 0;
-            }
-        }
-
-        class SocketManager {
-            constructor() {
-                this.socket = null;
-                this.reconnectAttempts = 0;
-                this.maxReconnectAttempts = 10;
-                this.baseReconnectDelay = 1000;
-                this.maxReconnectDelay = 30000;
-                this.heartbeatInterval = null;
-                this.state = new SyncState();
-                this.domManager = new DOMElementManager();
-                this.connectionTimeout = null;
-                this.lastStateUpdate = null;
-                
-                this.initializeAndConnect();
-            }
-
-            async initializeAndConnect() {
-                try {
-                    await this.domManager.initialize();
-                    this.restoreState();
-                    this.connect();
-                    this.setupEventListeners();
-                } catch (error) {
-                    console.error('Failed to initialize SocketManager:', error);
-                    this.showInitializationError(error);
-                }
-            }
-
-            saveState() {
-                try {
-                    if (this.state.isInProgress()) {
-                        localStorage.setItem('syncState', this.state.serialize());
-                        this.lastStateUpdate = Date.now();
-                    }
-                } catch (e) {
-                    console.error('Error saving state:', e);
-                }
-            }
-
-            restoreState() {
-                try {
-                    const savedState = localStorage.getItem('syncState');
-                    if (savedState) {
-                        const timestamp = this.lastStateUpdate || Date.now();
-                        const age = Date.now() - timestamp;
-                        
-                        // Only restore state if it's less than 5 minutes old
-                        if (age < 300000) {
-                            this.state = SyncState.deserialize(savedState);
-                            this.updateUI(this.state);
-                        } else {
-                            localStorage.removeItem('syncState');
-                        }
-                    }
-                } catch (e) {
-                    console.error('Error restoring state:', e);
-                    localStorage.removeItem('syncState');
-                }
-            }
-
-            connect() {
-                if (this.socket) {
-                    this.cleanup();
-                }
-
-                this.socket = io({
-                    reconnection: true,
-                    reconnectionAttempts: this.maxReconnectAttempts,
-                    reconnectionDelay: this.baseReconnectDelay,
-                    reconnectionDelayMax: this.maxReconnectDelay,
-                    randomizationFactor: 0.5,
-                    timeout: 60000
-                });
-
-                this.setupSocketEventHandlers();
-                this.startConnectionTimeout();
-            }
-
-            startConnectionTimeout() {
-                if (this.connectionTimeout) {
-                    clearTimeout(this.connectionTimeout);
-                }
-                
-                this.connectionTimeout = setTimeout(() => {
-                    if (!this.socket || !this.socket.connected) {
-                        this.handleConnectionTimeout();
-                    }
-                }, 10000);
-            }
-
-            handleConnectionTimeout() {
-                this.updateConnectionStatus('danger', 'Connection timed out. Attempting to reconnect...');
-                this.cleanup();
-                this.connect();
-            }
-
-            cleanup() {
-                if (this.heartbeatInterval) {
-                    clearInterval(this.heartbeatInterval);
-                    this.heartbeatInterval = null;
-                }
-                if (this.connectionTimeout) {
-                    clearTimeout(this.connectionTimeout);
-                    this.connectionTimeout = null;
-                }
-                if (this.socket) {
-                    this.socket.close();
-                    this.socket = null;
-                }
-            }
-
-            setupSocketEventHandlers() {
-                this.socket.on('connect', () => this.onConnect());
-                this.socket.on('disconnect', (reason) => this.onDisconnect(reason));
-                this.socket.on('connect_error', (error) => this.onConnectError(error));
-                this.socket.on('reconnect_attempt', (attemptNumber) => this.onReconnectAttempt(attemptNumber));
-                this.socket.on('reconnect_failed', () => this.onReconnectFailed());
-                this.socket.on('sync_progress', (data) => this.handleSyncProgress(data));
-                this.socket.on('error', (error) => this.handleSocketError(error));
-            }
-
-            handleSocketError(error) {
-                console.error('Socket error:', error);
-                this.updateConnectionStatus('danger', `Connection error: ${error.message}`);
-                this.saveState();
-            }
-
-            startHeartbeat() {
-                if (this.heartbeatInterval) {
-                    clearInterval(this.heartbeatInterval);
-                }
-                this.heartbeatInterval = setInterval(() => {
-                    if (this.socket && this.socket.connected) {
-                        this.socket.emit('heartbeat');
-                    }
-                }, 5000);
-            }
-
-            onConnect() {
-                this.reconnectAttempts = 0;
-                this.domManager.resetRetryCount();
-                this.domManager.safeUpdateElement('socket_id', { value: this.socket.id });
-                this.updateConnectionStatus('success', 'Connected to server');
-                this.startHeartbeat();
-                this.requestCurrentState();
-                
-                setTimeout(() => {
-                    this.domManager.safeUpdateElement('connectionStatus', {
-                        style: { display: 'none' }
-                    });
-                }, 3000);
-            }
-
-            onDisconnect(reason) {
-                this.cleanup();
-                this.saveState();
-                this.updateConnectionStatus('warning', 'Disconnected from server. Attempting to reconnect...');
-                
-                if (reason === 'io server disconnect' || reason === 'transport close') {
-                    setTimeout(() => this.connect(), this.baseReconnectDelay);
-                }
-            }
-
-            onConnectError(error) {
-                this.reconnectAttempts++;
-                const message = `Connection attempt ${this.reconnectAttempts} failed. ${this.getReconnectMessage()}`;
-                this.updateConnectionStatus('danger', message);
-                console.error('Connection error:', error);
-                
-                const delay = Math.min(
-                    this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts),
-                    this.maxReconnectDelay
-                );
-                setTimeout(() => this.connect(), delay);
-            }
-
-            onReconnectAttempt(attemptNumber) {
-                const message = `Attempting to reconnect (${attemptNumber}/${this.maxReconnectAttempts})...`;
-                this.updateConnectionStatus('warning', message);
-            }
-
-            onReconnectFailed() {
-                const message = 'Could not connect to server. Please refresh the page to try again.';
-                this.updateConnectionStatus('danger', message);
-                this.showError('Connection Failed', message);
-            }
-
-            showInitializationError(error) {
-                this.domManager.showError('Initialization Error',
-                    `Failed to initialize application: ${error.message}`);
-            }
-
-            updateConnectionStatus(type, message) {
-                this.domManager.safeUpdateElement('connectionStatus', {
-                    style: { display: 'block' },
-                    className: `alert alert-${type}`,
-                    textContent: message
-                });
-            }
-
-            requestCurrentState() {
-                if (this.socket && this.socket.connected) {
-                    this.socket.emit('request_state');
-                }
-            }
-
-            getReconnectMessage() {
-                const remainingAttempts = this.maxReconnectAttempts - this.reconnectAttempts;
-                return remainingAttempts > 0 
-                    ? `Will retry ${remainingAttempts} more times.` 
-                    : 'Please refresh the page to try again.';
-            }
-
-            setupEventListeners() {
-                const syncForm = this.domManager.getElement('syncForm');
-                syncForm.addEventListener('submit', async (e) => {
-                    e.preventDefault();
-                    if (!this.socket || !this.socket.connected) {
-                        this.showError('Connection Error',
-                            'Not connected to server. Please wait for reconnection or refresh the page.');
-                        return;
-                    }
-                    await this.handleFormSubmit(e);
-                });
-
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'visible') {
-                        this.requestCurrentState();
-                    }
-                });
-
-                // Handle beforeunload to save state
-                window.addEventListener('beforeunload', () => {
-                    this.saveState();
-                });
-            }
-
-            async handleFormSubmit(e) {
-                this.resetProgress();
-                this.state.reset();
-                this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
-                this.domManager.safeUpdateElement('syncButton', { disabled: true });
-                
-                try {
-                    const formData = new FormData(this.domManager.getElement('syncForm'));
-                    const response = await fetch('/sync', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw {...data, status_code: response.status};
-                    }
-
-                    if (data.status !== 'success') {
-                        throw new Error(data.message || 'Unknown error occurred');
-                    }
-                } catch (error) {
-                    this.handleError(this.formatErrorMessage(error));
-                }
-            }
-
-            handleSyncProgress(data) {
-                this.state.update(data);
-                this.saveState();
-                this.updateUI(data);
-            }
-
-            updateUI(data) {
-                try {
-                    this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
-                    
-                    switch (data.status) {
-                        case 'processing':
-                            this.updateProgressBar(data);
-                            break;
-                        case 'completed':
-                            this.handleSyncComplete(data);
-                            break;
-                        case 'error':
-                            this.handleSyncError(data);
-                            break;
-                        case 'retrying':
-                            this.handleSyncRetry(data);
-                            break;
-                    }
-                } catch (error) {
-                    console.error('Error updating UI:', error);
-                    this.showError('UI Update Error',
-                        'Failed to update the interface. Please refresh the page.');
-                }
-            }
-
-            updateProgressBar(data) {
-                try {
-                    this.domManager.safeUpdateElement('syncProgress', {
-                        classList: {
-                            remove: ['bg-danger', 'bg-warning', 'bg-success'],
-                            add: ['bg-primary']
-                        }
-                    });
-                    
-                    if (data.total && data.current) {
-                        const percentage = Math.round((data.current / data.total) * 100);
-                        this.domManager.safeUpdateElement('syncProgress', {
-                            style: { width: `${percentage}%` },
-                            textContent: `${percentage}%`,
-                            'aria-valuenow': percentage
-                        });
-                    }
-                    
-                    this.domManager.safeUpdateElement('syncStatus', {
-                        className: 'text-muted mb-2',
-                        textContent: data.message || 'Processing...'
-                    });
-                    
-                    if (data.contact) {
-                        this.domManager.safeUpdateElement('currentContact', {
-                            textContent: `Current contact: ${data.contact}`,
-                            style: { display: 'block' }
-                        });
-                    }
-                } catch (error) {
-                    console.error('Error updating progress bar:', error);
-                }
-            }
-
-            handleSyncComplete(data) {
-                this.domManager.safeUpdateElement('syncProgress', {
-                    classList: {
-                        remove: ['bg-primary', 'bg-warning', 'bg-danger'],
-                        add: ['bg-success']
-                    }
-                });
-
-                this.domManager.safeUpdateElement('syncStatus', {
-                    className: 'text-success mb-2',
-                    textContent: data.message || 'Sync completed successfully!'
-                });
-
-                this.domManager.safeUpdateElement('currentContact', {
-                    style: { display: 'none' }
-                });
-
-                this.domManager.safeUpdateElement('syncButton', {
-                    disabled: false
-                });
-
-                this.domManager.safeUpdateElement('errorDetails', {
-                    style: { display: 'none' }
-                });
-
-                localStorage.removeItem('syncState');
-            }
-
-            handleSyncError(data) {
-                this.showError(data.error_type, data.message, data.details);
-            }
-
-            handleSyncRetry(data) {
-                this.domManager.safeUpdateElement('syncProgress', {
-                    classList: {
-                        remove: ['bg-primary', 'bg-success'],
-                        add: ['bg-warning']
-                    }
-                });
-
-                this.domManager.safeUpdateElement('syncStatus', {
-                    className: 'text-warning mb-2',
-                    textContent: data.message
-                });
-            }
-
-            resetProgress() {
-                this.domManager.safeUpdateElement('syncProgress', {
-                    style: { width: '0%' },
-                    textContent: '0%',
-                    classList: {
-                        remove: ['bg-danger', 'bg-warning', 'bg-success'],
-                        add: ['bg-primary']
-                    }
-                });
-
-                this.domManager.safeUpdateElement('syncStatus', {
-                    className: 'text-muted mb-2',
-                    textContent: 'Starting sync process...'
-                });
-
-                this.domManager.safeUpdateElement('currentContact', {
-                    style: { display: 'none' }
-                });
-
-                this.domManager.safeUpdateElement('errorDetails', {
-                    style: { display: 'none' }
-                });
-            }
-
-            showError(type, message, details) {
-                this.domManager.safeUpdateElement('syncProgress', {
-                    classList: {
-                        remove: ['bg-primary', 'bg-warning', 'bg-success'],
-                        add: ['bg-danger']
-                    }
-                });
-
-                this.domManager.safeUpdateElement('syncStatus', {
-                    className: 'text-danger mb-2',
-                    textContent: message
-                });
-
-                const errorDetails = this.domManager.getElement('errorDetails');
-                if (errorDetails) {
-                    const heading = errorDetails.querySelector('.alert-heading');
-                    const errorMessage = errorDetails.querySelector('.error-message');
-                    const errorDetailsText = errorDetails.querySelector('.error-details');
-                    
-                    if (heading) heading.textContent = type;
-                    if (errorMessage) errorMessage.textContent = message;
-                    if (errorDetailsText && details) {
-                        errorDetailsText.textContent = details;
-                    }
-
-                    this.domManager.safeUpdateElement('errorDetails', {
-                        style: { display: 'block' }
-                    });
-                }
-
-                this.domManager.safeUpdateElement('syncButton', {
-                    disabled: false
-                });
-            }
-
-            formatErrorMessage(error) {
-                if (error.error_type) {
-                    return {
-                        type: error.error_type,
-                        message: error.message,
-                        details: error.details
-                    };
-                }
-                return {
-                    type: 'NETWORK_ERROR',
-                    message: error.message || 'Network connection error',
-                    details: 'Unable to connect to the server'
-                };
-            }
-        }
-
-        // Initialize the application after DOM is fully loaded
-        document.addEventListener('DOMContentLoaded', () => {
-            window.socketManager = new SocketManager();
+        // Initialize Socket.IO
+        const socket = io();
+        const connectionStatus = document.getElementById('connectionStatus');
+        const progressSection = document.getElementById('progressSection');
+        const syncProgress = document.getElementById('syncProgress');
+        const syncStatus = document.getElementById('syncStatus');
+        const currentContact = document.getElementById('currentContact');
+        const errorDetails = document.getElementById('errorDetails');
+        const syncForm = document.getElementById('syncForm');
+        const syncButton = document.getElementById('syncButton');
+
+        // Socket connection handlers
+        socket.on('connect', () => {
+            document.getElementById('socket_id').value = socket.id;
+            connectionStatus.className = 'alert alert-success';
+            connectionStatus.textContent = 'Connected to server';
+            setTimeout(() => {
+                connectionStatus.style.display = 'none';
+            }, 3000);
         });
 
-        // Global error handler
+        socket.on('disconnect', () => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-warning';
+            connectionStatus.textContent = 'Disconnected from server. Attempting to reconnect...';
+        });
+
+        socket.on('error', (error) => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-danger';
+            connectionStatus.textContent = 'Connection error: ' + error;
+        });
+
+        // Progress update handler
+        socket.on('sync_progress', (data) => {
+            progressSection.style.display = 'block';
+            
+            if (data.status === 'processing') {
+                syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+                syncProgress.classList.add('bg-primary');
+                
+                if (data.total && data.current) {
+                    const percentage = Math.round((data.current / data.total) * 100);
+                    syncProgress.style.width = `${percentage}%`;
+                    syncProgress.textContent = `${percentage}%`;
+                    syncProgress.setAttribute('aria-valuenow', percentage);
+                }
+                
+                syncStatus.className = 'text-muted mb-2';
+                syncStatus.textContent = data.message || 'Processing...';
+                
+                if (data.contact) {
+                    currentContact.textContent = `Current contact: ${data.contact}`;
+                    currentContact.style.display = 'block';
+                }
+            } else if (data.status === 'completed') {
+                syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-danger');
+                syncProgress.classList.add('bg-success');
+                syncStatus.className = 'text-success mb-2';
+                syncStatus.textContent = data.message || 'Sync completed successfully!';
+                currentContact.style.display = 'none';
+                syncButton.disabled = false;
+                errorDetails.style.display = 'none';
+            } else if (data.status === 'error') {
+                handleError({
+                    type: data.error_type,
+                    message: data.message,
+                    details: data.details
+                });
+            } else if (data.status === 'retrying') {
+                syncProgress.classList.remove('bg-primary', 'bg-success');
+                syncProgress.classList.add('bg-warning');
+                syncStatus.className = 'text-warning mb-2';
+                syncStatus.textContent = data.message;
+            }
+        });
+
+        // Form submission handler
+        syncForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            resetProgress();
+            progressSection.style.display = 'block';
+            syncButton.disabled = true;
+            
+            try {
+                const formData = new FormData(syncForm);
+                const response = await fetch('/sync', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (!response.ok) {
+                    throw {...data, status_code: response.status};
+                }
+
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'Unknown error occurred');
+                }
+            } catch (error) {
+                handleError(formatErrorMessage(error));
+            }
+        });
+
+        function resetProgress() {
+            syncProgress.style.width = '0%';
+            syncProgress.textContent = '0%';
+            syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-primary');
+            syncStatus.className = 'text-muted mb-2';
+            syncStatus.textContent = 'Starting sync process...';
+            currentContact.style.display = 'none';
+            errorDetails.style.display = 'none';
+        }
+
+        function handleError(error) {
+            syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-danger');
+            syncStatus.className = 'text-danger mb-2';
+            syncStatus.textContent = error.message;
+            
+            errorDetails.querySelector('.alert-heading').textContent = error.type;
+            errorDetails.querySelector('.error-message').textContent = error.message;
+            if (error.details) {
+                errorDetails.querySelector('.error-details').textContent = error.details;
+            }
+            
+            errorDetails.style.display = 'block';
+            syncButton.disabled = false;
+        }
+
+        function formatErrorMessage(error) {
+            if (error.error_type) {
+                return {
+                    type: error.error_type,
+                    message: error.message,
+                    details: error.details
+                };
+            }
+            return {
+                type: 'NETWORK_ERROR',
+                message: error.message || 'Network connection error',
+                details: 'Unable to connect to the server'
+            };
+        }
+
+        // Global error handler for unhandled promise rejections
         window.addEventListener('unhandledrejection', (event) => {
             console.error('Unhandled promise rejection:', event.reason);
-            if (window.socketManager) {
-                window.socketManager.showError(
-                    'UNHANDLED_ERROR',
-                    'An unexpected error occurred',
-                    event.reason.message || 'Unknown error'
-                );
-            }
+            handleError(formatErrorMessage(event.reason));
             event.preventDefault();
         });
     </script>
