@@ -21,21 +21,39 @@ import json
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
 
+# Configure logging for engine.io
+logging.getLogger('engineio').setLevel(logging.DEBUG)
+logging.getLogger('engineio.server').setLevel(logging.DEBUG)
+
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', ping_timeout=10, ping_interval=5)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='eventlet',
+    ping_timeout=60,
+    ping_interval=25,
+    engineio_logger=True,
+    logger=True,
+    reconnection=True,
+    reconnection_attempts=10,
+    reconnection_delay=1000,
+    reconnection_delay_max=30000
+)
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
 SYNC_TIMEOUT = 600  # 10 minutes timeout
 MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
-HEARTBEAT_INTERVAL = 5  # seconds
+HEARTBEAT_INTERVAL = 25  # seconds
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -95,7 +113,6 @@ class SessionManager:
 # Global variables for sync state management
 session_manager = SessionManager()
 sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
-sync_lock = threading.Lock()
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -172,23 +189,23 @@ def process_sync_queue():
                     'status': 'processing',
                     'message': 'Parsing LinkedIn export file...'
                 }, room)
-                
+
                 linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
                 total_contacts = len(linkedin_contacts)
-                
+
                 # Get existing contacts
                 emit_sync_progress({
                     'status': 'processing',
                     'message': 'Fetching existing contacts...'
                 }, room)
-                
+
                 existing_contacts = notion_manager.get_all_contacts()
                 existing_urls = {
                     contact['properties'].get('LinkedIn URL', {}).get('url'): contact['id']
                     for contact in existing_contacts
                     if contact['properties'].get('LinkedIn URL', {}).get('url')
                 }
-                
+
                 emit_sync_progress({
                     'status': 'processing',
                     'total': total_contacts,
@@ -202,12 +219,12 @@ def process_sync_queue():
                         try:
                             linkedin_url = contact.get('LinkedIn URL')
                             action = 'Updating' if linkedin_url in existing_urls else 'Adding'
-                            
+
                             if linkedin_url in existing_urls:
                                 notion_manager.update_contact(existing_urls[linkedin_url], contact)
                             else:
                                 notion_manager.add_contact(contact)
-                            
+
                             emit_sync_progress({
                                 'status': 'processing',
                                 'total': total_contacts,
@@ -323,7 +340,7 @@ def sync_contacts():
                 message='No file uploaded',
                 details='Please select a LinkedIn connections export file'
             )
-        
+
         file = request.files['linkedin_file']
         if file.filename == '':
             return error_response(
@@ -331,7 +348,7 @@ def sync_contacts():
                 message='No file selected',
                 details='Please choose a file before uploading'
             )
-        
+
         if not allowed_file(file.filename):
             return error_response(
                 error_type=SyncError.VALIDATION,
@@ -347,7 +364,7 @@ def sync_contacts():
         # Validate Notion credentials
         notion_token = request.form.get('notion_token')
         notion_database_id = request.form.get('notion_database_id')
-        
+
         if not notion_token or not notion_database_id:
             return error_response(
                 error_type=SyncError.VALIDATION,

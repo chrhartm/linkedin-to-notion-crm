@@ -52,6 +52,9 @@
                                 <p class="mb-0 error-message"></p>
                                 <small class="error-details"></small>
                             </div>
+                            <button type="button" class="btn btn-sm btn-outline-danger retry-button" style="display: none;">
+                                Retry
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -138,6 +141,103 @@
             }
         }
 
+        class DOMElementManager {
+            constructor() {
+                this.elements = {};
+                this.initialized = false;
+                this.initializationPromise = null;
+            }
+
+            async initialize(retries = 5, delay = 100) {
+                if (this.initialized) return this.elements;
+                
+                if (this.initializationPromise) {
+                    return this.initializationPromise;
+                }
+
+                this.initializationPromise = new Promise(async (resolve, reject) => {
+                    let attempt = 0;
+                    
+                    const tryInitialize = async () => {
+                        try {
+                            const elementIds = [
+                                'connectionStatus',
+                                'progressSection',
+                                'syncProgress',
+                                'syncStatus',
+                                'currentContact',
+                                'errorDetails',
+                                'syncForm',
+                                'syncButton',
+                                'socket_id'
+                            ];
+
+                            const elements = {};
+                            const missingElements = [];
+
+                            elementIds.forEach(id => {
+                                const element = document.getElementById(id);
+                                if (element) {
+                                    elements[id] = element;
+                                } else {
+                                    missingElements.push(id);
+                                }
+                            });
+
+                            if (missingElements.length > 0) {
+                                throw new Error(`Missing DOM elements: ${missingElements.join(', ')}`);
+                            }
+
+                            this.elements = elements;
+                            this.initialized = true;
+                            resolve(this.elements);
+                        } catch (error) {
+                            attempt++;
+                            if (attempt >= retries) {
+                                reject(new Error(`Failed to initialize DOM elements after ${retries} attempts: ${error.message}`));
+                                return;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt)));
+                            await tryInitialize();
+                        }
+                    };
+
+                    await tryInitialize();
+                });
+
+                return this.initializationPromise;
+            }
+
+            getElement(id) {
+                if (!this.initialized) {
+                    throw new Error('DOM Elements not initialized');
+                }
+                return this.elements[id];
+            }
+
+            safeUpdateElement(id, updates) {
+                const element = this.elements[id];
+                if (!element) return false;
+
+                try {
+                    Object.entries(updates).forEach(([key, value]) => {
+                        if (key === 'classList') {
+                            if (value.add) element.classList.add(...value.add);
+                            if (value.remove) element.classList.remove(...value.remove);
+                        } else if (key === 'style') {
+                            Object.assign(element.style, value);
+                        } else {
+                            element[key] = value;
+                        }
+                    });
+                    return true;
+                } catch (error) {
+                    console.error(`Error updating element ${id}:`, error);
+                    return false;
+                }
+            }
+        }
+
         class SocketManager {
             constructor() {
                 this.socket = null;
@@ -147,22 +247,20 @@
                 this.maxReconnectDelay = 30000;
                 this.heartbeatInterval = null;
                 this.state = new SyncState();
+                this.domManager = new DOMElementManager();
                 
-                this.initializeDOMElements();
-                this.connect();
-                this.setupEventListeners();
+                this.initializeAndConnect();
             }
 
-            initializeDOMElements() {
-                this.connectionStatus = document.getElementById('connectionStatus');
-                this.progressSection = document.getElementById('progressSection');
-                this.syncProgress = document.getElementById('syncProgress');
-                this.syncStatus = document.getElementById('syncStatus');
-                this.currentContact = document.getElementById('currentContact');
-                this.errorDetails = document.getElementById('errorDetails');
-                this.syncForm = document.getElementById('syncForm');
-                this.syncButton = document.getElementById('syncButton');
-                this.socketIdInput = document.getElementById('socket_id');
+            async initializeAndConnect() {
+                try {
+                    await this.domManager.initialize();
+                    this.connect();
+                    this.setupEventListeners();
+                } catch (error) {
+                    console.error('Failed to initialize SocketManager:', error);
+                    this.showInitializationError(error);
+                }
             }
 
             connect() {
@@ -175,7 +273,8 @@
                     reconnectionAttempts: this.maxReconnectAttempts,
                     reconnectionDelay: this.baseReconnectDelay,
                     reconnectionDelayMax: this.maxReconnectDelay,
-                    randomizationFactor: 0.5
+                    randomizationFactor: 0.5,
+                    timeout: 60000
                 });
 
                 this.setupSocketEventHandlers();
@@ -214,14 +313,15 @@
 
             onConnect() {
                 this.reconnectAttempts = 0;
-                this.socketIdInput.value = this.socket.id;
+                this.domManager.safeUpdateElement('socket_id', { value: this.socket.id });
                 this.updateConnectionStatus('success', 'Connected to server');
-                
                 this.startHeartbeat();
                 this.requestCurrentState();
                 
                 setTimeout(() => {
-                    this.connectionStatus.style.display = 'none';
+                    this.domManager.safeUpdateElement('connectionStatus', {
+                        style: { display: 'none' }
+                    });
                 }, 3000);
             }
 
@@ -230,7 +330,7 @@
                 this.updateConnectionStatus('warning', 'Disconnected from server. Attempting to reconnect...');
                 
                 if (reason === 'io server disconnect') {
-                    this.connect();
+                    setTimeout(() => this.connect(), this.baseReconnectDelay);
                 }
             }
 
@@ -240,7 +340,7 @@
                 this.updateConnectionStatus('danger', message);
                 console.error('Connection error:', error);
                 
-                const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+                const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
                 setTimeout(() => this.connect(), delay);
             }
 
@@ -252,6 +352,24 @@
             onReconnectFailed() {
                 const message = 'Could not connect to server. Please refresh the page to try again.';
                 this.updateConnectionStatus('danger', message);
+            }
+
+            showInitializationError(error) {
+                const container = document.querySelector('.container');
+                if (container) {
+                    const alert = document.createElement('div');
+                    alert.className = 'alert alert-danger mt-3';
+                    alert.textContent = `Failed to initialize application: ${error.message}`;
+                    container.insertBefore(alert, container.firstChild);
+                }
+            }
+
+            updateConnectionStatus(type, message) {
+                this.domManager.safeUpdateElement('connectionStatus', {
+                    style: { display: 'block' },
+                    className: `alert alert-${type}`,
+                    textContent: message
+                });
             }
 
             requestCurrentState() {
@@ -267,14 +385,9 @@
                     : 'Please refresh the page to try again.';
             }
 
-            updateConnectionStatus(type, message) {
-                this.connectionStatus.style.display = 'block';
-                this.connectionStatus.className = `alert alert-${type}`;
-                this.connectionStatus.textContent = message;
-            }
-
             setupEventListeners() {
-                this.syncForm.addEventListener('submit', async (e) => {
+                const syncForm = this.domManager.getElement('syncForm');
+                syncForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     if (!this.socket || !this.socket.connected) {
                         this.showError('Connection Error', 'Not connected to server. Please wait for reconnection or refresh the page.');
@@ -293,11 +406,11 @@
             async handleFormSubmit(e) {
                 this.resetProgress();
                 this.state.reset();
-                this.progressSection.style.display = 'block';
-                this.syncButton.disabled = true;
+                this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
+                this.domManager.safeUpdateElement('syncButton', { disabled: true });
                 
                 try {
-                    const formData = new FormData(this.syncForm);
+                    const formData = new FormData(this.domManager.getElement('syncForm'));
                     const response = await fetch('/sync', {
                         method: 'POST',
                         body: formData
@@ -318,7 +431,7 @@
 
             handleSyncProgress(data) {
                 this.state.update(data);
-                this.progressSection.style.display = 'block';
+                this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
                 
                 switch (data.status) {
                     case 'processing':
@@ -337,33 +450,63 @@
             }
 
             updateProgressBar(data) {
-                this.syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
-                this.syncProgress.classList.add('bg-primary');
+                const progressBar = this.domManager.getElement('syncProgress');
+                const syncStatus = this.domManager.getElement('syncStatus');
+                const currentContact = this.domManager.getElement('currentContact');
+
+                this.domManager.safeUpdateElement('syncProgress', {
+                    classList: {
+                        remove: ['bg-danger', 'bg-warning', 'bg-success'],
+                        add: ['bg-primary']
+                    }
+                });
                 
                 if (data.total && data.current) {
                     const percentage = Math.round((data.current / data.total) * 100);
-                    this.syncProgress.style.width = `${percentage}%`;
-                    this.syncProgress.textContent = `${percentage}%`;
-                    this.syncProgress.setAttribute('aria-valuenow', percentage);
+                    this.domManager.safeUpdateElement('syncProgress', {
+                        style: { width: `${percentage}%` },
+                        textContent: `${percentage}%`,
+                        'aria-valuenow': percentage
+                    });
                 }
                 
-                this.syncStatus.className = 'text-muted mb-2';
-                this.syncStatus.textContent = data.message || 'Processing...';
+                this.domManager.safeUpdateElement('syncStatus', {
+                    className: 'text-muted mb-2',
+                    textContent: data.message || 'Processing...'
+                });
                 
                 if (data.contact) {
-                    this.currentContact.textContent = `Current contact: ${data.contact}`;
-                    this.currentContact.style.display = 'block';
+                    this.domManager.safeUpdateElement('currentContact', {
+                        textContent: `Current contact: ${data.contact}`,
+                        style: { display: 'block' }
+                    });
                 }
             }
 
             handleSyncComplete(data) {
-                this.syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-danger');
-                this.syncProgress.classList.add('bg-success');
-                this.syncStatus.className = 'text-success mb-2';
-                this.syncStatus.textContent = data.message || 'Sync completed successfully!';
-                this.currentContact.style.display = 'none';
-                this.syncButton.disabled = false;
-                this.errorDetails.style.display = 'none';
+                this.domManager.safeUpdateElement('syncProgress', {
+                    classList: {
+                        remove: ['bg-primary', 'bg-warning', 'bg-danger'],
+                        add: ['bg-success']
+                    }
+                });
+
+                this.domManager.safeUpdateElement('syncStatus', {
+                    className: 'text-success mb-2',
+                    textContent: data.message || 'Sync completed successfully!'
+                });
+
+                this.domManager.safeUpdateElement('currentContact', {
+                    style: { display: 'none' }
+                });
+
+                this.domManager.safeUpdateElement('syncButton', {
+                    disabled: false
+                });
+
+                this.domManager.safeUpdateElement('errorDetails', {
+                    style: { display: 'none' }
+                });
             }
 
             handleSyncError(data) {
@@ -371,37 +514,70 @@
             }
 
             handleSyncRetry(data) {
-                this.syncProgress.classList.remove('bg-primary', 'bg-success');
-                this.syncProgress.classList.add('bg-warning');
-                this.syncStatus.className = 'text-warning mb-2';
-                this.syncStatus.textContent = data.message;
+                this.domManager.safeUpdateElement('syncProgress', {
+                    classList: {
+                        remove: ['bg-primary', 'bg-success'],
+                        add: ['bg-warning']
+                    }
+                });
+
+                this.domManager.safeUpdateElement('syncStatus', {
+                    className: 'text-warning mb-2',
+                    textContent: data.message
+                });
             }
 
             resetProgress() {
-                this.syncProgress.style.width = '0%';
-                this.syncProgress.textContent = '0%';
-                this.syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
-                this.syncProgress.classList.add('bg-primary');
-                this.syncStatus.className = 'text-muted mb-2';
-                this.syncStatus.textContent = 'Starting sync process...';
-                this.currentContact.style.display = 'none';
-                this.errorDetails.style.display = 'none';
+                this.domManager.safeUpdateElement('syncProgress', {
+                    style: { width: '0%' },
+                    textContent: '0%',
+                    classList: {
+                        remove: ['bg-danger', 'bg-warning', 'bg-success'],
+                        add: ['bg-primary']
+                    }
+                });
+
+                this.domManager.safeUpdateElement('syncStatus', {
+                    className: 'text-muted mb-2',
+                    textContent: 'Starting sync process...'
+                });
+
+                this.domManager.safeUpdateElement('currentContact', {
+                    style: { display: 'none' }
+                });
+
+                this.domManager.safeUpdateElement('errorDetails', {
+                    style: { display: 'none' }
+                });
             }
 
             showError(type, message, details) {
-                this.syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-success');
-                this.syncProgress.classList.add('bg-danger');
-                this.syncStatus.className = 'text-danger mb-2';
-                this.syncStatus.textContent = message;
-                
-                this.errorDetails.querySelector('.alert-heading').textContent = type;
-                this.errorDetails.querySelector('.error-message').textContent = message;
+                this.domManager.safeUpdateElement('syncProgress', {
+                    classList: {
+                        remove: ['bg-primary', 'bg-warning', 'bg-success'],
+                        add: ['bg-danger']
+                    }
+                });
+
+                this.domManager.safeUpdateElement('syncStatus', {
+                    className: 'text-danger mb-2',
+                    textContent: message
+                });
+
+                const errorDetails = this.domManager.getElement('errorDetails');
+                errorDetails.querySelector('.alert-heading').textContent = type;
+                errorDetails.querySelector('.error-message').textContent = message;
                 if (details) {
-                    this.errorDetails.querySelector('.error-details').textContent = details;
+                    errorDetails.querySelector('.error-details').textContent = details;
                 }
-                
-                this.errorDetails.style.display = 'block';
-                this.syncButton.disabled = false;
+
+                this.domManager.safeUpdateElement('errorDetails', {
+                    style: { display: 'block' }
+                });
+
+                this.domManager.safeUpdateElement('syncButton', {
+                    disabled: false
+                });
             }
 
             formatErrorMessage(error) {
@@ -420,10 +596,12 @@
             }
         }
 
+        // Initialize the application after DOM is fully loaded
         document.addEventListener('DOMContentLoaded', () => {
             window.socketManager = new SocketManager();
         });
 
+        // Global error handler
         window.addEventListener('unhandledrejection', (event) => {
             console.error('Unhandled promise rejection:', event.reason);
             if (window.socketManager) {
