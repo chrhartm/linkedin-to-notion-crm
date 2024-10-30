@@ -20,8 +20,31 @@ import threading
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.urandom(24)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Configure CORS properly
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "allow_headers": ["Content-Type"],
+        "methods": ["GET", "POST", "OPTIONS"]
+    }
+})
+
+# Configure Socket.IO with proper settings
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='eventlet',
+    logger=True,
+    engineio_logger=True,
+    ping_timeout=60,
+    ping_interval=25,
+    max_http_buffer_size=1e8,
+    manage_session=False,
+    always_connect=True,
+    websocket=True
+)
 
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
@@ -30,8 +53,10 @@ MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -67,7 +92,7 @@ def allowed_file(filename):
 def emit_sync_progress(data, room=None):
     with app.app_context():
         try:
-            socketio.emit('sync_progress', data, room=room)
+            socketio.emit('sync_progress', data, room=room, namespace='/')
         except Exception as e:
             logging.error(f"Error emitting sync progress: {str(e)}")
 
@@ -145,10 +170,16 @@ sync_thread.start()
 @socketio.on('connect')
 def handle_connect():
     logging.info(f"Client connected: {request.sid}")
+    emit('connect_response', {'status': 'connected', 'sid': request.sid})
 
 @socketio.on('disconnect')
 def handle_disconnect():
     logging.info(f"Client disconnected: {request.sid}")
+
+@socketio.on_error()
+def error_handler(e):
+    logging.error(f"SocketIO error: {str(e)}\n{traceback.format_exc()}")
+    emit('error', {'message': str(e)})
 
 @app.route('/')
 def home():
@@ -243,4 +274,4 @@ def sync_contacts():
         )
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=3000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=3000, debug=True, allow_unsafe_werkzeug=True)
