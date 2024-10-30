@@ -20,6 +20,7 @@
             <div class="card-body">
                 <h5 class="card-title">Sync LinkedIn Contacts</h5>
                 <form id="syncForm" action="/sync" method="post" enctype="multipart/form-data" class="mb-4">
+                    <input type="hidden" id="socket_id" name="socket_id" value="">
                     <div class="mb-3">
                         <label for="notion_token" class="form-label">Notion Token</label>
                         <input type="password" class="form-control" id="notion_token" name="notion_token" required>
@@ -123,6 +124,7 @@
 
         // Socket connection handlers
         socket.on('connect', () => {
+            document.getElementById('socket_id').value = socket.id;
             connectionStatus.className = 'alert alert-success';
             connectionStatus.textContent = 'Connected to server';
             setTimeout(() => {

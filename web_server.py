@@ -196,6 +196,15 @@ def sync_contacts():
                 details="Please try again later when current operations complete"
             )
 
+        # Get socket_id from form data
+        socket_id = request.form.get('socket_id')
+        if not socket_id:
+            return error_response(
+                error_type=SyncError.VALIDATION,
+                message="Missing socket ID",
+                details="Socket connection not established"
+            )
+
         # Validate file upload
         if 'linkedin_file' not in request.files:
             return error_response(
@@ -240,7 +249,7 @@ def sync_contacts():
             'filepath': filepath,
             'notion_token': notion_token,
             'notion_database_id': notion_database_id,
-            'room': request.sid
+            'room': socket_id
         })
 
         return jsonify({
