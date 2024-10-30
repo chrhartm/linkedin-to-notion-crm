@@ -50,22 +50,33 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*",  # Will be filtered by our custom validation
     async_mode='eventlet',
-    ping_timeout=60,
-    ping_interval=25,
+    ping_timeout=120,  # Increased to 120 seconds
+    ping_interval=15,  # Reduced to 15 seconds
     manage_session=False,
     logger=True,
     engineio_logger=True,
     transports=['websocket', 'polling'],
     always_connect=True,
     reconnection=True,
-    reconnection_attempts=10,
-    reconnection_delay=1000,
-    reconnection_delay_max=5000,
-    randomization_factor=0.5,
-    cookie=None,
-    max_http_buffer_size=1024 * 1024,  # 1MB
+    reconnection_attempts=5,
+    reconnection_delay=2000,
+    reconnection_delay_max=10000,
+    transport_options={
+        'websocket': {
+            'ping_timeout': 120,
+            'ping_interval': 15,
+            'max_payload_length': 10 * 1024 * 1024  # 10MB
+        },
+        'polling': {
+            'timeout': 60
+        }
+    },
+    max_http_buffer_size=10 * 1024 * 1024,  # 10MB
     http_compression=True,
-    ssl_verify=False if os.environ.get('REPL_SLUG') else True  # Disable SSL verification on Replit
+    heartbeat_interval=15,
+    heartbeat_timeout=120,
+    close_timeout=60,
+    ssl_verify=False if os.environ.get('REPL_SLUG') else True
 )
 
 UPLOAD_FOLDER = 'uploads'
