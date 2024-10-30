@@ -1,5 +1,10 @@
+# Monkey patch at the very beginning before other imports
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, jsonify, request, flash, send_from_directory
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 from werkzeug.utils import secure_filename
 from notion_manager import NotionManager
 from linkedin_parser import LinkedInParser
@@ -10,14 +15,19 @@ from functools import wraps
 from time import time
 from notion_client.errors import APIResponseError
 import traceback
+import queue
+import threading
 
 app = Flask(__name__, static_folder='static')
-CORS(app)  # Enable CORS for all routes
-app.secret_key = os.urandom(24)
+app.config['SECRET_KEY'] = os.urandom(24)
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
-SYNC_TIMEOUT = 300  # 5 minutes timeout
-MAX_RETRIES = 3  # Maximum number of retries for failed operations
+SYNC_TIMEOUT = 600  # 10 minutes timeout
+MAX_RETRIES = 3
+MAX_QUEUE_SIZE = 10
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -26,15 +36,9 @@ logging.basicConfig(level=logging.INFO,
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Global variable to track sync progress
-sync_progress = {
-    'total': 0,
-    'current': 0,
-    'status': 'idle',
-    'last_update': time(),
-    'error': None,
-    'retry_count': 0
-}
+# Global variables for sync state management
+sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+sync_lock = threading.Lock()
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -44,6 +48,7 @@ class SyncError:
     TIMEOUT = "TIMEOUT_ERROR"
     VALIDATION = "VALIDATION_ERROR"
     RETRY_FAILED = "RETRY_FAILED"
+    QUEUE_FULL = "QUEUE_FULL_ERROR"
 
 def error_response(error_type, message, details=None, status_code=400):
     error_data = {
@@ -59,81 +64,161 @@ def error_response(error_type, message, details=None, status_code=400):
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def error_handler(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
+def emit_sync_progress(data, room=None):
+    with app.app_context():
         try:
-            return f(*args, **kwargs)
-        except APIResponseError as e:
-            logging.error(f"Notion API Error in {f.__name__}: {str(e)}\n{traceback.format_exc()}")
-            return error_response(
-                error_type=SyncError.NOTION_API,
-                message="Error connecting to Notion API",
-                details=str(e),
-                status_code=400
-            )
+            socketio.emit('sync_progress', data, room=room)
         except Exception as e:
-            logging.error(f"Unexpected error in {f.__name__}: {str(e)}\n{traceback.format_exc()}")
-            return error_response(
-                error_type=SyncError.NETWORK,
-                message="An unexpected error occurred",
-                details=str(e),
-                status_code=500
-            )
-    return decorated_function
+            logging.error(f"Error emitting sync progress: {str(e)}")
+
+def process_sync_queue():
+    while True:
+        try:
+            sync_data = sync_queue.get()
+            if sync_data is None:  # Shutdown signal
+                break
+
+            room = sync_data.get('room')
+            emit_sync_progress({
+                'status': 'processing',
+                'message': 'Starting sync process...'
+            }, room)
+
+            filepath = sync_data['filepath']
+            notion_token = sync_data['notion_token']
+            notion_database_id = sync_data['notion_database_id']
+
+            try:
+                os.environ['NOTION_TOKEN'] = notion_token
+                os.environ['NOTION_DATABASE_ID'] = notion_database_id
+
+                notion_manager = NotionManager()
+                linkedin_parser = LinkedInParser()
+                contact_manager = ContactManager(notion_manager, linkedin_parser)
+
+                # Parse LinkedIn contacts
+                emit_sync_progress({
+                    'status': 'processing',
+                    'message': 'Parsing LinkedIn export file...'
+                }, room)
+                
+                contacts = linkedin_parser.parse_linkedin_export(filepath)
+                total_contacts = len(contacts)
+                
+                emit_sync_progress({
+                    'status': 'processing',
+                    'total': total_contacts,
+                    'current': 0,
+                    'message': f'Found {total_contacts} contacts to process'
+                }, room)
+
+                for i, contact in enumerate(contacts, 1):
+                    retry_count = 0
+                    while retry_count < MAX_RETRIES:
+                        try:
+                            notion_manager.add_contact(contact)
+                            emit_sync_progress({
+                                'status': 'processing',
+                                'total': total_contacts,
+                                'current': i,
+                                'message': f'Processing contact: {contact.get("Name", "Unknown")} ({i}/{total_contacts})',
+                                'contact': contact.get('Name', 'Unknown')
+                            }, room)
+                            break
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= MAX_RETRIES:
+                                raise e
+                            emit_sync_progress({
+                                'status': 'retrying',
+                                'message': f'Retry {retry_count}/{MAX_RETRIES} for contact {contact.get("Name", "Unknown")}'
+                            }, room)
+
+                emit_sync_progress({
+                    'status': 'completed',
+                    'total': total_contacts,
+                    'current': total_contacts,
+                    'message': 'Sync completed successfully!'
+                }, room)
+
+            except Exception as e:
+                error_type = (
+                    SyncError.NOTION_API if isinstance(e, APIResponseError)
+                    else SyncError.NETWORK
+                )
+                emit_sync_progress({
+                    'status': 'error',
+                    'error_type': error_type,
+                    'message': str(e),
+                    'details': traceback.format_exc()
+                }, room)
+            finally:
+                # Clean up the uploaded file
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                sync_queue.task_done()
+
+        except Exception as e:
+            logging.error(f"Queue processing error: {str(e)}\n{traceback.format_exc()}")
+
+# Start the queue processing thread
+sync_thread = threading.Thread(target=process_sync_queue, daemon=True)
+sync_thread.start()
+
+@socketio.on('connect')
+def handle_connect():
+    logging.info(f"Client connected: {request.sid}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info(f"Client disconnected: {request.sid}")
 
 @app.route('/')
-@error_handler
 def home():
     return render_template('index.html')
 
 @app.route('/howto-linkedin.png')
-@error_handler
 def serve_linkedin_image():
     return send_from_directory('assets', 'howto-linkedin.png')
 
 @app.route('/howto-notion.png')
-@error_handler
 def serve_notion_image():
     return send_from_directory('assets', 'howto-notion.png')
 
 @app.route('/sync', methods=['POST'])
-@error_handler
 def sync_contacts():
-    global sync_progress
-    sync_progress = {
-        'total': 0,
-        'current': 0,
-        'status': 'starting',
-        'last_update': time(),
-        'error': None,
-        'retry_count': 0
-    }
-
-    # Validate file upload
-    if 'linkedin_file' not in request.files:
-        return error_response(
-            error_type=SyncError.VALIDATION,
-            message='No file uploaded',
-            details='Please select a LinkedIn connections export file'
-        )
-    
-    file = request.files['linkedin_file']
-    if file.filename == '':
-        return error_response(
-            error_type=SyncError.VALIDATION,
-            message='No file selected',
-            details='Please choose a file before uploading'
-        )
-    
-    if not allowed_file(file.filename):
-        return error_response(
-            error_type=SyncError.VALIDATION,
-            message='Invalid file type',
-            details='Please upload a CSV file exported from LinkedIn'
-        )
-
     try:
+        # Check if queue is full
+        if sync_queue.full():
+            return error_response(
+                error_type=SyncError.QUEUE_FULL,
+                message="Sync queue is full",
+                details="Please try again later when current operations complete"
+            )
+
+        # Validate file upload
+        if 'linkedin_file' not in request.files:
+            return error_response(
+                error_type=SyncError.VALIDATION,
+                message='No file uploaded',
+                details='Please select a LinkedIn connections export file'
+            )
+        
+        file = request.files['linkedin_file']
+        if file.filename == '':
+            return error_response(
+                error_type=SyncError.VALIDATION,
+                message='No file selected',
+                details='Please choose a file before uploading'
+            )
+        
+        if not allowed_file(file.filename):
+            return error_response(
+                error_type=SyncError.VALIDATION,
+                message='Invalid file type',
+                details='Please upload a CSV file exported from LinkedIn'
+            )
+
         # Save the uploaded file
         filename = secure_filename(file.filename)
         filepath = os.path.join(UPLOAD_FOLDER, filename)
@@ -150,159 +235,26 @@ def sync_contacts():
                 details='Both Notion token and database ID are required'
             )
 
-        os.environ['NOTION_TOKEN'] = notion_token
-        os.environ['NOTION_DATABASE_ID'] = notion_database_id
-
-        try:
-            notion_manager = NotionManager()
-            linkedin_parser = LinkedInParser()
-            contact_manager = ContactManager(notion_manager, linkedin_parser)
-
-            # Parse contacts first to get total count
-            try:
-                contacts = linkedin_parser.parse_linkedin_export(filepath)
-                if not contacts:
-                    return error_response(
-                        error_type=SyncError.FILE_PROCESSING,
-                        message='No contacts found in the file',
-                        details='The LinkedIn export file appears to be empty'
-                    )
-            except Exception as e:
-                logging.error(f"File processing error: {str(e)}\n{traceback.format_exc()}")
-                return error_response(
-                    error_type=SyncError.FILE_PROCESSING,
-                    message='Error processing LinkedIn export file',
-                    details=str(e)
-                )
-
-            sync_progress['total'] = len(contacts)
-            sync_progress['status'] = 'syncing'
-
-            # Sync contacts with progress tracking and retry logic
-            for i, contact in enumerate(contacts):
-                retry_count = 0
-                while retry_count < MAX_RETRIES:
-                    try:
-                        notion_manager.add_contact(contact)
-                        sync_progress['current'] = i + 1
-                        sync_progress['last_update'] = time()
-                        break
-                    except APIResponseError as e:
-                        retry_count += 1
-                        if retry_count >= MAX_RETRIES:
-                            sync_progress['error'] = {
-                                'error_type': SyncError.NOTION_API,
-                                'message': f"Error syncing contact {contact.get('Name', 'Unknown')} after {MAX_RETRIES} retries",
-                                'details': str(e)
-                            }
-                            logging.error(f"Failed to sync contact after {MAX_RETRIES} retries: {str(e)}")
-                        else:
-                            logging.warning(f"Retry {retry_count} for contact {contact.get('Name', 'Unknown')}")
-                    except Exception as e:
-                        retry_count += 1
-                        if retry_count >= MAX_RETRIES:
-                            sync_progress['error'] = {
-                                'error_type': SyncError.NETWORK,
-                                'message': f"Error syncing contact {contact.get('Name', 'Unknown')} after {MAX_RETRIES} retries",
-                                'details': str(e)
-                            }
-                            logging.error(f"Failed to sync contact after {MAX_RETRIES} retries: {str(e)}")
-                        else:
-                            logging.warning(f"Retry {retry_count} for contact {contact.get('Name', 'Unknown')}")
-
-            if not sync_progress['error']:
-                sync_progress['status'] = 'completed'
-
-        except APIResponseError as e:
-            logging.error(f"Notion API Error: {str(e)}\n{traceback.format_exc()}")
-            return error_response(
-                error_type=SyncError.NOTION_API,
-                message='Error connecting to Notion API',
-                details=str(e)
-            )
-        except Exception as e:
-            logging.error(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
-            return error_response(
-                error_type=SyncError.NETWORK,
-                message='Unexpected error during sync process',
-                details=str(e)
-            )
-        finally:
-            # Clean up uploaded file
-            if os.path.exists(filepath):
-                os.remove(filepath)
+        # Add to processing queue with socket room ID
+        sync_queue.put({
+            'filepath': filepath,
+            'notion_token': notion_token,
+            'notion_database_id': notion_database_id,
+            'room': request.sid
+        })
 
         return jsonify({
             'status': 'success',
-            'message': 'Sync process started successfully'
+            'message': 'Sync process started'
         })
 
     except Exception as e:
         logging.error(f"Error in sync process: {str(e)}\n{traceback.format_exc()}")
-        sync_progress['status'] = 'error'
-        sync_progress['error'] = {
-            'error_type': SyncError.NETWORK,
-            'message': 'Unexpected error during sync process',
-            'details': str(e)
-        }
         return error_response(
             error_type=SyncError.NETWORK,
             message='Unexpected error during sync process',
             details=str(e)
         )
 
-@app.route('/sync/progress')
-@error_handler
-def get_sync_progress():
-    global sync_progress
-    
-    try:
-        # Check for timeout
-        if sync_progress['status'] in ['starting', 'syncing']:
-            if time() - sync_progress['last_update'] > SYNC_TIMEOUT:
-                sync_progress['status'] = 'error'
-                sync_progress['error'] = {
-                    'error_type': SyncError.TIMEOUT,
-                    'message': 'Sync operation timed out',
-                    'details': 'The operation took longer than the maximum allowed time'
-                }
-                logging.error("Sync operation timed out")
-        
-        response = {
-            'status': sync_progress['status'],
-            'total': sync_progress['total'],
-            'current': sync_progress['current'],
-        }
-        
-        if sync_progress['error']:
-            response.update(sync_progress['error'])
-        
-        return jsonify(response)
-        
-    except Exception as e:
-        logging.error(f"Error fetching progress: {str(e)}\n{traceback.format_exc()}")
-        return error_response(
-            error_type=SyncError.NETWORK,
-            message='Error fetching sync progress',
-            details=str(e)
-        )
-
-@app.route('/api/contacts')
-@error_handler
-def get_contacts():
-    try:
-        notion_manager = NotionManager()
-        contacts = notion_manager.get_all_contacts()
-        return jsonify({
-            "status": "success",
-            "contacts": contacts
-        })
-    except APIResponseError as e:
-        return error_response(
-            error_type=SyncError.NOTION_API,
-            message='Error retrieving contacts from Notion',
-            details=str(e)
-        )
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=3000, debug=True)

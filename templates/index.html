@@ -1,16 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
-<!-- Previous head and body content remains the same until the script section -->
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Personal CRM</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
-    <!-- Previous HTML content remains the same -->
     <div class="container mt-5">
         <h1 class="mb-4">Personal CRM</h1>
+        
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="alert alert-info" role="alert">
+            Connecting to server...
+        </div>
+
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Sync LinkedIn Contacts</h5>
@@ -33,10 +38,12 @@
                 <!-- Progress Section -->
                 <div id="progressSection" style="display: none;">
                     <div class="progress mb-3">
-                        <div id="syncProgress" class="progress-bar" role="progressbar" style="width: 0%;" 
-                             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                        <div id="syncProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" 
+                             aria-valuemax="100">0%</div>
                     </div>
-                    <p id="syncStatus" class="text-muted"></p>
+                    <p id="syncStatus" class="text-muted mb-2"></p>
+                    <p id="currentContact" class="text-muted small mb-3"></p>
                     <div id="errorDetails" class="alert alert-danger" style="display: none;">
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
@@ -53,72 +60,142 @@
             </div>
         </div>
 
-        <!-- Previous How To section remains the same -->
+        <!-- How To Section -->
         <div class="card mb-4">
-            <!-- How To content remains the same -->
+            <div class="card-body">
+                <h2 class="card-title mb-4">How To Use</h2>
+                
+                <!-- LinkedIn Instructions -->
+                <div class="mb-4">
+                    <h3>1. Export LinkedIn Contacts</h3>
+                    <div class="mb-4">
+                        <p>Follow these steps to export your LinkedIn connections:</p>
+                        <ol class="list-group list-group-numbered mb-3">
+                            <li class="list-group-item">Go to LinkedIn.com and sign in</li>
+                            <li class="list-group-item">Click on 'Me'</li>
+                            <li class="list-group-item">Click on 'Settings & Privacy'</li>
+                            <li class="list-group-item">Click on 'Data Privacy'</li>
+                            <li class="list-group-item">Select 'Get a copy of your data'</li>
+                            <li class="list-group-item">Select 'Connections' and request a download</li>
+                        </ol>
+                    </div>
+                    <div class="text-center">
+                        <img src="/howto-linkedin.png" alt="LinkedIn Export Instructions" class="img-fluid rounded shadow-sm mb-3" style="max-width: 100%; height: auto;">
+                    </div>
+                </div>
+
+                <!-- Notion Instructions -->
+                <div class="mb-4">
+                    <h3>2. Set Up Notion Integration</h3>
+                    <div class="mb-4">
+                        <p>Configure your Notion integration and get your credentials:</p>
+                        <ol class="list-group list-group-numbered mb-3">
+                            <li class="list-group-item">Go to notion.so/my-integrations</li>
+                            <li class="list-group-item">Click 'Create new integration'</li>
+                            <li class="list-group-item">Name your integration</li>
+                            <li class="list-group-item">Copy the Integration Token</li>
+                            <li class="list-group-item">Create a new database in Notion</li>
+                            <li class="list-group-item">Copy the database ID from the URL</li>
+                            <li class="list-group-item">Open the settings of the Database page on the top left three dots</li>
+                            <li class="list-group-item">Select 'Connect to' and your integration</li>
+                        </ol>
+                    </div>
+                    <div class="text-center">
+                        <img src="/howto-notion.png" alt="Notion Setup Instructions" class="img-fluid rounded shadow-sm mb-3" style="max-width: 100%; height: auto;">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const MAX_POLLING_TIME = 300000; // 5 minutes in milliseconds
-        const BASE_POLLING_INTERVAL = 1000; // 1 second base interval
-        const MAX_RETRIES = 3;
-        const BACKOFF_FACTOR = 1.5; // Exponential backoff factor
+        // Initialize Socket.IO
+        const socket = io();
+        const connectionStatus = document.getElementById('connectionStatus');
+        const progressSection = document.getElementById('progressSection');
+        const syncProgress = document.getElementById('syncProgress');
+        const syncStatus = document.getElementById('syncStatus');
+        const currentContact = document.getElementById('currentContact');
+        const errorDetails = document.getElementById('errorDetails');
+        const syncForm = document.getElementById('syncForm');
+        const syncButton = document.getElementById('syncButton');
 
-        let pollingStartTime;
-        let progressCheckInterval;
-        let currentRetryCount = 0;
-        let pollingTimeout;
-        let currentBackoffDelay = BASE_POLLING_INTERVAL;
+        // Socket connection handlers
+        socket.on('connect', () => {
+            connectionStatus.className = 'alert alert-success';
+            connectionStatus.textContent = 'Connected to server';
+            setTimeout(() => {
+                connectionStatus.style.display = 'none';
+            }, 3000);
+        });
 
-        const ERROR_DESCRIPTIONS = {
-            'FILE_UPLOAD_ERROR': 'There was a problem uploading your file',
-            'NOTION_API_ERROR': 'There was an error connecting to Notion',
-            'FILE_PROCESSING_ERROR': 'There was a problem processing your LinkedIn export file',
-            'NETWORK_ERROR': 'There was a problem with the network connection',
-            'TIMEOUT_ERROR': 'The operation took too long to complete',
-            'VALIDATION_ERROR': 'There was a problem with the provided information',
-            'RETRY_FAILED': 'Maximum retry attempts reached'
-        };
+        socket.on('disconnect', () => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-warning';
+            connectionStatus.textContent = 'Disconnected from server. Attempting to reconnect...';
+        });
 
-        const RETRYABLE_ERRORS = {
-            'NETWORK_ERROR': true,
-            'NOTION_API_ERROR': true,
-            'TIMEOUT_ERROR': true
-        };
+        socket.on('error', (error) => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-danger';
+            connectionStatus.textContent = 'Connection error: ' + error;
+        });
 
-        function cleanup() {
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-                progressCheckInterval = null;
-            }
-            if (pollingTimeout) {
-                clearTimeout(pollingTimeout);
-                pollingTimeout = null;
-            }
-            currentBackoffDelay = BASE_POLLING_INTERVAL;
-        }
-
-        document.getElementById('syncForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            try {
-                const formData = new FormData(this);
-                await startSync(formData);
-            } catch (error) {
-                handleError(formatErrorMessage(error));
+        // Progress update handler
+        socket.on('sync_progress', (data) => {
+            progressSection.style.display = 'block';
+            
+            if (data.status === 'processing') {
+                syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+                syncProgress.classList.add('bg-primary');
+                
+                if (data.total && data.current) {
+                    const percentage = Math.round((data.current / data.total) * 100);
+                    syncProgress.style.width = `${percentage}%`;
+                    syncProgress.textContent = `${percentage}%`;
+                    syncProgress.setAttribute('aria-valuenow', percentage);
+                }
+                
+                syncStatus.className = 'text-muted mb-2';
+                syncStatus.textContent = data.message || 'Processing...';
+                
+                if (data.contact) {
+                    currentContact.textContent = `Current contact: ${data.contact}`;
+                    currentContact.style.display = 'block';
+                }
+            } else if (data.status === 'completed') {
+                syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-danger');
+                syncProgress.classList.add('bg-success');
+                syncStatus.className = 'text-success mb-2';
+                syncStatus.textContent = data.message || 'Sync completed successfully!';
+                currentContact.style.display = 'none';
+                syncButton.disabled = false;
+                errorDetails.style.display = 'none';
+            } else if (data.status === 'error') {
+                handleError({
+                    type: data.error_type,
+                    message: data.message,
+                    details: data.details
+                });
+            } else if (data.status === 'retrying') {
+                syncProgress.classList.remove('bg-primary', 'bg-success');
+                syncProgress.classList.add('bg-warning');
+                syncStatus.className = 'text-warning mb-2';
+                syncStatus.textContent = data.message;
             }
         });
 
-        async function startSync(formData) {
-            const progressSection = document.getElementById('progressSection');
-            const syncButton = document.getElementById('syncButton');
+        // Form submission handler
+        syncForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
             
             resetProgress();
             progressSection.style.display = 'block';
             syncButton.disabled = true;
             
             try {
+                const formData = new FormData(syncForm);
                 const response = await fetch('/sync', {
                     method: 'POST',
                     body: formData
@@ -129,249 +206,60 @@
                     throw {...data, status_code: response.status};
                 }
 
-                if (data.status === 'success') {
-                    pollingStartTime = Date.now();
-                    currentRetryCount = 0;
-                    await pollProgress();
-                } else {
+                if (data.status !== 'success') {
                     throw new Error(data.message || 'Unknown error occurred');
                 }
             } catch (error) {
-                const errorMessage = formatErrorMessage(error);
-                handleError(errorMessage);
+                handleError(formatErrorMessage(error));
             }
-        }
-
-        async function checkProgress() {
-            try {
-                const response = await fetch('/sync/progress');
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw {...data, status_code: response.status};
-                }
-
-                const data = await response.json();
-                return data;
-            } catch (error) {
-                throw error;
-            }
-        }
-
-        async function pollProgress() {
-            cleanup();
-
-            // Set up timeout for the entire polling operation
-            pollingTimeout = setTimeout(() => {
-                cleanup();
-                handleError({
-                    type: 'TIMEOUT_ERROR',
-                    message: 'Sync operation timed out',
-                    details: 'The operation took longer than the maximum allowed time',
-                    retryable: true
-                });
-            }, MAX_POLLING_TIME);
-
-            let failedAttempts = 0;
-
-            async function poll() {
-                try {
-                    if (Date.now() - pollingStartTime > MAX_POLLING_TIME) {
-                        throw {
-                            error_type: 'TIMEOUT_ERROR',
-                            message: 'Sync operation timed out',
-                            details: 'The operation took longer than the maximum allowed time'
-                        };
-                    }
-
-                    const data = await checkProgress();
-                    
-                    // Reset backoff on successful request
-                    currentBackoffDelay = BASE_POLLING_INTERVAL;
-                    failedAttempts = 0;
-                    
-                    handleProgressUpdate(data);
-
-                    // If not completed, schedule next poll with current delay
-                    if (data.status !== 'completed' && data.status !== 'error') {
-                        progressCheckInterval = setTimeout(poll, currentBackoffDelay);
-                    } else {
-                        cleanup();
-                    }
-                } catch (error) {
-                    failedAttempts++;
-                    console.error('Progress polling error:', error);
-
-                    if (failedAttempts >= MAX_RETRIES) {
-                        cleanup();
-                        const errorMessage = formatErrorMessage(error);
-                        handleError(errorMessage);
-                    } else {
-                        // Exponential backoff
-                        currentBackoffDelay *= BACKOFF_FACTOR;
-                        const progressBar = document.getElementById('syncProgress');
-                        progressBar.classList.remove('bg-primary');
-                        progressBar.classList.add('bg-warning');
-                        document.getElementById('syncStatus').textContent = 
-                            `Connection attempt ${failedAttempts} of ${MAX_RETRIES} (retrying in ${Math.round(currentBackoffDelay/1000)}s)...`;
-                        
-                        // Schedule next attempt with exponential backoff
-                        progressCheckInterval = setTimeout(poll, currentBackoffDelay);
-                    }
-                }
-            }
-
-            // Start polling
-            await poll();
-        }
-
-        function formatErrorMessage(error) {
-            let message = {
-                type: 'NETWORK_ERROR',
-                message: 'Network connection error',
-                details: 'Unable to connect to the server',
-                retryable: true
-            };
-
-            if (error.error_type) {
-                message = {
-                    type: error.error_type,
-                    message: error.message || ERROR_DESCRIPTIONS[error.error_type],
-                    details: error.details || 'No additional details available',
-                    retryable: RETRYABLE_ERRORS[error.error_type] || false
-                };
-            } else if (error.status_code) {
-                message.message = `Server error (${error.status_code})`;
-                message.details = error.message || 'Server is not responding correctly';
-                message.retryable = error.status_code >= 500;
-            }
-
-            return message;
-        }
+        });
 
         function resetProgress() {
-            const progressBar = document.getElementById('syncProgress');
-            const statusText = document.getElementById('syncStatus');
-            const errorDetails = document.getElementById('errorDetails');
-            
-            progressBar.style.width = '0%';
-            progressBar.textContent = '0%';
-            progressBar.classList.remove('bg-danger', 'bg-warning', 'bg-success');
-            progressBar.classList.add('bg-primary');
-            statusText.className = 'text-muted';
-            statusText.textContent = 'Starting sync process...';
+            syncProgress.style.width = '0%';
+            syncProgress.textContent = '0%';
+            syncProgress.classList.remove('bg-danger', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-primary');
+            syncStatus.className = 'text-muted mb-2';
+            syncStatus.textContent = 'Starting sync process...';
+            currentContact.style.display = 'none';
             errorDetails.style.display = 'none';
-            
-            cleanup();
-            currentRetryCount = 0;
-        }
-
-        function handleProgressUpdate(data) {
-            const progressBar = document.getElementById('syncProgress');
-            const statusText = document.getElementById('syncStatus');
-            const syncButton = document.getElementById('syncButton');
-            const errorDetails = document.getElementById('errorDetails');
-
-            if (data.error_type) {
-                handleError({
-                    type: data.error_type,
-                    message: data.message,
-                    details: data.details,
-                    retryable: RETRYABLE_ERRORS[data.error_type] || false
-                });
-                return;
-            }
-
-            if (data.total > 0) {
-                const percentage = Math.round((data.current / data.total) * 100);
-                progressBar.style.width = `${percentage}%`;
-                progressBar.textContent = `${percentage}%`;
-                progressBar.setAttribute('aria-valuenow', percentage);
-                
-                statusText.textContent = `Processing: ${data.current} of ${data.total} contacts`;
-
-                if (data.status === 'completed') {
-                    cleanup();
-                    statusText.textContent = 'Sync completed successfully!';
-                    statusText.className = 'text-success';
-                    syncButton.disabled = false;
-                    errorDetails.style.display = 'none';
-                    progressBar.classList.remove('bg-primary', 'bg-warning');
-                    progressBar.classList.add('bg-success');
-                }
-            }
         }
 
         function handleError(error) {
-            const progressBar = document.getElementById('syncProgress');
-            const statusText = document.getElementById('syncStatus');
-            const syncButton = document.getElementById('syncButton');
-            const errorDetails = document.getElementById('errorDetails');
-            const retryButton = errorDetails.querySelector('.retry-button');
-
-            cleanup();
-
-            progressBar.classList.remove('bg-primary', 'bg-warning', 'bg-success');
-            progressBar.classList.add('bg-danger');
-            statusText.className = 'text-danger';
-            
-            statusText.textContent = ERROR_DESCRIPTIONS[error.type] || 'An error occurred';
+            syncProgress.classList.remove('bg-primary', 'bg-warning', 'bg-success');
+            syncProgress.classList.add('bg-danger');
+            syncStatus.className = 'text-danger mb-2';
+            syncStatus.textContent = error.message;
             
             errorDetails.querySelector('.alert-heading').textContent = error.type;
             errorDetails.querySelector('.error-message').textContent = error.message;
-            errorDetails.querySelector('.error-details').textContent = error.details;
-            
-            if (error.retryable && currentRetryCount < MAX_RETRIES) {
-                retryButton.style.display = 'block';
-                retryButton.textContent = `Retry (${currentRetryCount + 1}/${MAX_RETRIES})`;
-                retryButton.onclick = async () => {
-                    try {
-                        currentRetryCount++;
-                        if (currentRetryCount < MAX_RETRIES) {
-                            const formData = new FormData(document.getElementById('syncForm'));
-                            await startSync(formData);
-                        } else {
-                            retryButton.style.display = 'none';
-                            handleError({
-                                type: 'RETRY_FAILED',
-                                message: 'Maximum retry attempts reached',
-                                details: 'Please check your connections and try again later',
-                                retryable: false
-                            });
-                        }
-                    } catch (error) {
-                        handleError(formatErrorMessage(error));
-                    }
-                };
-            } else {
-                retryButton.style.display = 'none';
+            if (error.details) {
+                errorDetails.querySelector('.error-details').textContent = error.details;
             }
             
             errorDetails.style.display = 'block';
             syncButton.disabled = false;
         }
 
-        // Global error boundary for unhandled promise rejections
-        window.addEventListener('unhandledrejection', function(event) {
-            console.error('Unhandled promise rejection:', event.reason);
-            cleanup();
-            
-            if (event.reason instanceof Error) {
-                handleError({
-                    type: 'NETWORK_ERROR',
-                    message: event.reason.message || 'Unexpected error occurred',
-                    details: 'A network error occurred while communicating with the server',
-                    retryable: true
-                });
-            } else if (typeof event.reason === 'object') {
-                handleError(formatErrorMessage(event.reason));
-            } else {
-                handleError({
-                    type: 'NETWORK_ERROR',
-                    message: 'Unexpected error occurred',
-                    details: 'An unknown error occurred',
-                    retryable: true
-                });
+        function formatErrorMessage(error) {
+            if (error.error_type) {
+                return {
+                    type: error.error_type,
+                    message: error.message,
+                    details: error.details
+                };
             }
+            return {
+                type: 'NETWORK_ERROR',
+                message: error.message || 'Network connection error',
+                details: 'Unable to connect to the server'
+            };
+        }
+
+        // Global error handler for unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            handleError(formatErrorMessage(event.reason));
             event.preventDefault();
         });
     </script>
