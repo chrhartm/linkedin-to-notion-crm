@@ -61,6 +61,7 @@
             </div>
         </div>
 
+        <!-- Rest of the HTML remains the same -->
         <!-- How To Section -->
         <div class="card mb-4">
             <div class="card-body">
@@ -113,18 +114,24 @@
     <script>
         const currentHost = window.location.hostname;
         const currentProtocol = window.location.protocol;
+        let pingInterval;
+        let reconnectTimer;
         
         const socket = io({
             reconnection: true,
-            reconnectionAttempts: 5,
+            reconnectionAttempts: 10,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
             timeout: 20000,
             autoConnect: true,
             transports: ['websocket', 'polling'],
-            withCredentials: true,
+            upgrade: true,
+            rememberUpgrade: true,
             path: '/socket.io',
-            secure: currentProtocol === 'https:'
+            secure: currentProtocol === 'https:',
+            rejectUnauthorized: false,
+            forceNew: true,
+            withCredentials: true
         });
 
         const connectionStatus = document.getElementById('connectionStatus');
@@ -137,8 +144,45 @@
         const syncButton = document.getElementById('syncButton');
 
         let reconnectAttempts = 0;
-        const maxReconnectAttempts = 5;
+        const maxReconnectAttempts = 10;
         let isReconnecting = false;
+
+        function startPingInterval() {
+            // Clear existing interval if any
+            if (pingInterval) {
+                clearInterval(pingInterval);
+            }
+            // Start new ping interval
+            pingInterval = setInterval(() => {
+                if (socket.connected) {
+                    socket.emit('ping', null, (response) => {
+                        if (!response || response.status !== 'ok') {
+                            handleConnectionError(new Error('Ping failed'));
+                        }
+                    });
+                }
+            }, 25000); // 25 seconds
+        }
+
+        function stopPingInterval() {
+            if (pingInterval) {
+                clearInterval(pingInterval);
+                pingInterval = null;
+            }
+        }
+
+        function attemptReconnect() {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+            }
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectTimer = setTimeout(() => {
+                    if (!socket.connected) {
+                        socket.connect();
+                    }
+                }, Math.min(1000 * Math.pow(2, reconnectAttempts), 10000));
+            }
+        }
 
         socket.on('connect', () => {
             document.getElementById('socket_id').value = socket.id;
@@ -147,16 +191,18 @@
             connectionStatus.style.display = 'block';
             reconnectAttempts = 0;
             isReconnecting = false;
+            startPingInterval();
             setTimeout(() => {
                 connectionStatus.style.display = 'none';
             }, 3000);
         });
 
-        socket.on('disconnect', () => {
+        socket.on('disconnect', (reason) => {
+            stopPingInterval();
             connectionStatus.style.display = 'block';
             connectionStatus.className = 'alert alert-warning';
             connectionStatus.textContent = 'Disconnected from server. Attempting to reconnect...';
-            handleDisconnect();
+            handleDisconnect(reason);
         });
 
         socket.on('connect_error', (error) => {
@@ -167,6 +213,18 @@
         socket.on('error', (error) => {
             console.error('Socket error:', error);
             handleConnectionError(error);
+        });
+
+        socket.on('reconnect_attempt', (attemptNumber) => {
+            connectionStatus.style.display = 'block';
+            connectionStatus.className = 'alert alert-info';
+            connectionStatus.textContent = `Attempting to reconnect (${attemptNumber}/${maxReconnectAttempts})...`;
+        });
+
+        socket.on('reconnect_failed', () => {
+            connectionStatus.className = 'alert alert-danger';
+            connectionStatus.textContent = 'Failed to reconnect. Please refresh the page.';
+            connectionStatus.style.display = 'block';
         });
 
         socket.on('sync_progress', (data) => {
@@ -275,18 +333,17 @@
             syncButton.disabled = false;
         }
 
-        function handleDisconnect() {
+        function handleDisconnect(reason) {
+            stopPingInterval();
             if (isReconnecting) return;
             
-            if (reconnectAttempts < maxReconnectAttempts) {
+            if (reason === 'io server disconnect') {
+                // Server has forcefully disconnected, attempt immediate reconnection
+                socket.connect();
+            } else if (reconnectAttempts < maxReconnectAttempts) {
                 isReconnecting = true;
                 reconnectAttempts++;
-                setTimeout(() => {
-                    if (!socket.connected) {
-                        socket.connect();
-                        isReconnecting = false;
-                    }
-                }, Math.min(1000 * reconnectAttempts, 5000));
+                attemptReconnect();
             } else {
                 connectionStatus.className = 'alert alert-danger';
                 connectionStatus.textContent = 'Connection lost. Please refresh the page to try again.';
@@ -294,10 +351,12 @@
         }
 
         function handleConnectionError(error) {
+            stopPingInterval();
             if (reconnectAttempts < maxReconnectAttempts) {
                 reconnectAttempts++;
                 connectionStatus.className = 'alert alert-warning';
                 connectionStatus.textContent = `Connection attempt ${reconnectAttempts}/${maxReconnectAttempts} failed. Retrying...`;
+                attemptReconnect();
             } else {
                 connectionStatus.className = 'alert alert-danger';
                 connectionStatus.textContent = 'Failed to connect to server. Please refresh the page to try again.';
@@ -323,6 +382,14 @@
             console.error('Unhandled promise rejection:', event.reason);
             handleError(formatErrorMessage(event.reason));
             event.preventDefault();
+        });
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            stopPingInterval();
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+            }
         });
     </script>
 </body>

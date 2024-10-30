@@ -45,7 +45,7 @@ CORS(app, resources={
     }
 })
 
-# Configure SocketIO with production settings
+# Configure SocketIO with enhanced production settings
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",  # Will be filtered by our custom validation
@@ -54,7 +54,18 @@ socketio = SocketIO(
     ping_interval=25,
     manage_session=False,
     logger=True,
-    engineio_logger=True
+    engineio_logger=True,
+    transports=['websocket', 'polling'],
+    always_connect=True,
+    reconnection=True,
+    reconnection_attempts=10,
+    reconnection_delay=1000,
+    reconnection_delay_max=5000,
+    randomization_factor=0.5,
+    cookie=None,
+    max_http_buffer_size=1024 * 1024,  # 1MB
+    http_compression=True,
+    ssl_verify=False if os.environ.get('REPL_SLUG') else True  # Disable SSL verification on Replit
 )
 
 UPLOAD_FOLDER = 'uploads'
@@ -76,6 +87,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 sync_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
 sync_lock = threading.Lock()
 active_connections = set()
+connection_timestamps = {}
 
 class SyncError:
     FILE_UPLOAD = "FILE_UPLOAD_ERROR"
@@ -231,20 +243,45 @@ def process_sync_queue():
 sync_thread = threading.Thread(target=process_sync_queue, daemon=True)
 sync_thread.start()
 
+def check_connection_health():
+    """Monitor connection health and clean up stale connections"""
+    current_time = time()
+    stale_connections = set()
+    
+    for sid in active_connections:
+        if current_time - connection_timestamps.get(sid, 0) > 120:  # 2 minutes timeout
+            stale_connections.add(sid)
+    
+    for sid in stale_connections:
+        active_connections.discard(sid)
+        connection_timestamps.pop(sid, None)
+        logging.warning(f"Removed stale connection: {sid}")
+
 @socketio.on('connect')
 def handle_connect():
     origin = request.headers.get('Origin', '')
     if not is_valid_replit_domain(origin):
         logging.warning(f"Rejected connection from unauthorized origin: {origin}")
         disconnect()
-        return
+        return False
+    
     active_connections.add(request.sid)
+    connection_timestamps[request.sid] = time()
     logging.info(f"Client connected: {request.sid}")
+    return True
 
 @socketio.on('disconnect')
 def handle_disconnect():
     active_connections.discard(request.sid)
+    connection_timestamps.pop(request.sid, None)
     logging.info(f"Client disconnected: {request.sid}")
+
+@socketio.on('ping')
+def handle_ping():
+    """Handle client ping to keep connection alive"""
+    if request.sid in active_connections:
+        connection_timestamps[request.sid] = time()
+        return {'status': 'ok'}
 
 @socketio.on_error_default
 def default_error_handler(e):
@@ -266,6 +303,9 @@ def serve_notion_image():
 @app.route('/sync', methods=['POST'])
 def sync_contacts():
     try:
+        # Check connection health before processing new request
+        check_connection_health()
+        
         # Check if queue is full
         if sync_queue.full():
             return error_response(
@@ -276,11 +316,11 @@ def sync_contacts():
 
         # Get socket_id from form data
         socket_id = request.form.get('socket_id')
-        if not socket_id:
+        if not socket_id or socket_id not in active_connections:
             return error_response(
                 error_type=SyncError.VALIDATION,
-                message="Missing socket ID",
-                details="Socket connection not established"
+                message="Invalid or missing socket ID",
+                details="Socket connection not established or expired"
             )
 
         # Validate file upload
