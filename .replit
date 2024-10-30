@@ -19,6 +19,10 @@ args = "Run Personal CRM"
 task = "workflow.run"
 args = "Flask Web Server"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Generate Images"
+
 [[workflows.workflow]]
 name = "Run Personal CRM"
 author = "agent"
@@ -44,6 +48,20 @@ task = "packager.installForAll"
 task = "shell.exec"
 args = "python web_server.py"
 waitForPort = 3000
+
+[[workflows.workflow]]
+name = "Generate Images"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python generate_howto_images.py"
 
 [deployment]
 run = ["sh", "-c", "python main.py"]

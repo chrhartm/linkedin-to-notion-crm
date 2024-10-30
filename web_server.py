@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, flash
+from flask import Flask, render_template, jsonify, request, flash, send_from_directory
 from werkzeug.utils import secure_filename
 from notion_manager import NotionManager
 from linkedin_parser import LinkedInParser
@@ -6,7 +6,7 @@ from contact_manager import ContactManager
 import os
 import logging
 
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='', static_folder='assets')
 app.secret_key = os.urandom(24)
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'csv'}
