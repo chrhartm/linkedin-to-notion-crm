@@ -16,6 +16,16 @@
             Connecting to server...
         </div>
 
+        <!-- Error Boundary -->
+        <div id="errorBoundary" class="alert alert-danger" style="display: none;">
+            <h5 class="alert-heading">Application Error</h5>
+            <p class="mb-0"></p>
+            <hr>
+            <button type="button" class="btn btn-outline-danger btn-sm" onclick="window.location.reload()">
+                Reload Application
+            </button>
+        </div>
+
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Sync LinkedIn Contacts</h5>
@@ -139,6 +149,33 @@
             isInProgress() {
                 return this.status === 'processing' || this.status === 'retrying';
             }
+
+            serialize() {
+                return JSON.stringify({
+                    status: this.status,
+                    message: this.message,
+                    total: this.total,
+                    current: this.current,
+                    contact: this.contact,
+                    errorType: this.errorType,
+                    errorDetails: this.errorDetails
+                });
+            }
+
+            static deserialize(data) {
+                const state = new SyncState();
+                if (typeof data === 'string') {
+                    try {
+                        const parsed = JSON.parse(data);
+                        state.update(parsed);
+                    } catch (e) {
+                        console.error('Error deserializing state:', e);
+                    }
+                } else if (data && typeof data === 'object') {
+                    state.update(data);
+                }
+                return state;
+            }
         }
 
         class DOMElementManager {
@@ -146,6 +183,9 @@
                 this.elements = {};
                 this.initialized = false;
                 this.initializationPromise = null;
+                this.errorBoundary = null;
+                this.retryCount = 0;
+                this.maxRetries = 3;
             }
 
             async initialize(retries = 5, delay = 100) {
@@ -156,85 +196,122 @@
                 }
 
                 this.initializationPromise = new Promise(async (resolve, reject) => {
-                    let attempt = 0;
-                    
-                    const tryInitialize = async () => {
-                        try {
-                            const elementIds = [
-                                'connectionStatus',
-                                'progressSection',
-                                'syncProgress',
-                                'syncStatus',
-                                'currentContact',
-                                'errorDetails',
-                                'syncForm',
-                                'syncButton',
-                                'socket_id'
-                            ];
+                    try {
+                        // Initialize error boundary first
+                        this.errorBoundary = document.getElementById('errorBoundary');
+                        
+                        const elementIds = [
+                            'connectionStatus',
+                            'progressSection',
+                            'syncProgress',
+                            'syncStatus',
+                            'currentContact',
+                            'errorDetails',
+                            'syncForm',
+                            'syncButton',
+                            'socket_id',
+                            'errorBoundary'
+                        ];
 
-                            const elements = {};
-                            const missingElements = [];
+                        const elements = {};
+                        const missingElements = [];
 
-                            elementIds.forEach(id => {
-                                const element = document.getElementById(id);
-                                if (element) {
-                                    elements[id] = element;
-                                } else {
-                                    missingElements.push(id);
-                                }
-                            });
-
-                            if (missingElements.length > 0) {
-                                throw new Error(`Missing DOM elements: ${missingElements.join(', ')}`);
+                        for (const id of elementIds) {
+                            const element = document.getElementById(id);
+                            if (element) {
+                                elements[id] = element;
+                            } else {
+                                missingElements.push(id);
                             }
-
-                            this.elements = elements;
-                            this.initialized = true;
-                            resolve(this.elements);
-                        } catch (error) {
-                            attempt++;
-                            if (attempt >= retries) {
-                                reject(new Error(`Failed to initialize DOM elements after ${retries} attempts: ${error.message}`));
-                                return;
-                            }
-                            await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, attempt)));
-                            await tryInitialize();
                         }
-                    };
 
-                    await tryInitialize();
+                        if (missingElements.length > 0) {
+                            throw new Error(`Missing DOM elements: ${missingElements.join(', ')}`);
+                        }
+
+                        this.elements = elements;
+                        this.initialized = true;
+                        resolve(this.elements);
+                    } catch (error) {
+                        this.showError('Initialization Error', error.message);
+                        reject(error);
+                    }
                 });
 
                 return this.initializationPromise;
+            }
+
+            showError(title, message) {
+                if (this.errorBoundary) {
+                    this.errorBoundary.querySelector('.alert-heading').textContent = title;
+                    this.errorBoundary.querySelector('p').textContent = message;
+                    this.errorBoundary.style.display = 'block';
+                } else {
+                    console.error('Error boundary not found:', title, message);
+                }
             }
 
             getElement(id) {
                 if (!this.initialized) {
                     throw new Error('DOM Elements not initialized');
                 }
-                return this.elements[id];
+                const element = this.elements[id];
+                if (!element) {
+                    throw new Error(`Element with id "${id}" not found`);
+                }
+                return element;
             }
 
             safeUpdateElement(id, updates) {
-                const element = this.elements[id];
-                if (!element) return false;
-
                 try {
+                    const element = this.getElement(id);
+                    if (!element) return false;
+
                     Object.entries(updates).forEach(([key, value]) => {
-                        if (key === 'classList') {
-                            if (value.add) element.classList.add(...value.add);
-                            if (value.remove) element.classList.remove(...value.remove);
-                        } else if (key === 'style') {
-                            Object.assign(element.style, value);
-                        } else {
-                            element[key] = value;
+                        try {
+                            if (key === 'classList' && value) {
+                                if (value.add && Array.isArray(value.add)) {
+                                    element.classList.add(...value.add);
+                                }
+                                if (value.remove && Array.isArray(value.remove)) {
+                                    element.classList.remove(...value.remove);
+                                }
+                            } else if (key === 'style' && value && typeof value === 'object') {
+                                Object.entries(value).forEach(([prop, val]) => {
+                                    if (val !== undefined && val !== null) {
+                                        element.style[prop] = val;
+                                    }
+                                });
+                            } else if (value !== undefined && value !== null) {
+                                element[key] = value;
+                            }
+                        } catch (error) {
+                            console.error(`Error updating ${key} on element ${id}:`, error);
+                            throw error;
                         }
                     });
                     return true;
                 } catch (error) {
-                    console.error(`Error updating element ${id}:`, error);
+                    this.retryCount++;
+                    console.error(`Error updating element ${id} (attempt ${this.retryCount}):`, error);
+                    
+                    if (this.retryCount >= this.maxRetries) {
+                        this.showError('UI Update Error', 
+                            `Failed to update interface after ${this.maxRetries} attempts. Please refresh the page.`);
+                        return false;
+                    }
+                    
+                    // Schedule retry with exponential backoff
+                    setTimeout(() => {
+                        this.safeUpdateElement(id, updates);
+                    }, Math.pow(2, this.retryCount) * 100);
+                    
                     return false;
                 }
+            }
+
+            resetRetryCount() {
+                this.retryCount = 0;
             }
         }
 
@@ -248,6 +325,8 @@
                 this.heartbeatInterval = null;
                 this.state = new SyncState();
                 this.domManager = new DOMElementManager();
+                this.connectionTimeout = null;
+                this.lastStateUpdate = null;
                 
                 this.initializeAndConnect();
             }
@@ -255,11 +334,44 @@
             async initializeAndConnect() {
                 try {
                     await this.domManager.initialize();
+                    this.restoreState();
                     this.connect();
                     this.setupEventListeners();
                 } catch (error) {
                     console.error('Failed to initialize SocketManager:', error);
                     this.showInitializationError(error);
+                }
+            }
+
+            saveState() {
+                try {
+                    if (this.state.isInProgress()) {
+                        localStorage.setItem('syncState', this.state.serialize());
+                        this.lastStateUpdate = Date.now();
+                    }
+                } catch (e) {
+                    console.error('Error saving state:', e);
+                }
+            }
+
+            restoreState() {
+                try {
+                    const savedState = localStorage.getItem('syncState');
+                    if (savedState) {
+                        const timestamp = this.lastStateUpdate || Date.now();
+                        const age = Date.now() - timestamp;
+                        
+                        // Only restore state if it's less than 5 minutes old
+                        if (age < 300000) {
+                            this.state = SyncState.deserialize(savedState);
+                            this.updateUI(this.state);
+                        } else {
+                            localStorage.removeItem('syncState');
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error restoring state:', e);
+                    localStorage.removeItem('syncState');
                 }
             }
 
@@ -278,12 +390,35 @@
                 });
 
                 this.setupSocketEventHandlers();
+                this.startConnectionTimeout();
+            }
+
+            startConnectionTimeout() {
+                if (this.connectionTimeout) {
+                    clearTimeout(this.connectionTimeout);
+                }
+                
+                this.connectionTimeout = setTimeout(() => {
+                    if (!this.socket || !this.socket.connected) {
+                        this.handleConnectionTimeout();
+                    }
+                }, 10000);
+            }
+
+            handleConnectionTimeout() {
+                this.updateConnectionStatus('danger', 'Connection timed out. Attempting to reconnect...');
+                this.cleanup();
+                this.connect();
             }
 
             cleanup() {
                 if (this.heartbeatInterval) {
                     clearInterval(this.heartbeatInterval);
                     this.heartbeatInterval = null;
+                }
+                if (this.connectionTimeout) {
+                    clearTimeout(this.connectionTimeout);
+                    this.connectionTimeout = null;
                 }
                 if (this.socket) {
                     this.socket.close();
@@ -298,6 +433,13 @@
                 this.socket.on('reconnect_attempt', (attemptNumber) => this.onReconnectAttempt(attemptNumber));
                 this.socket.on('reconnect_failed', () => this.onReconnectFailed());
                 this.socket.on('sync_progress', (data) => this.handleSyncProgress(data));
+                this.socket.on('error', (error) => this.handleSocketError(error));
+            }
+
+            handleSocketError(error) {
+                console.error('Socket error:', error);
+                this.updateConnectionStatus('danger', `Connection error: ${error.message}`);
+                this.saveState();
             }
 
             startHeartbeat() {
@@ -313,6 +455,7 @@
 
             onConnect() {
                 this.reconnectAttempts = 0;
+                this.domManager.resetRetryCount();
                 this.domManager.safeUpdateElement('socket_id', { value: this.socket.id });
                 this.updateConnectionStatus('success', 'Connected to server');
                 this.startHeartbeat();
@@ -327,9 +470,10 @@
 
             onDisconnect(reason) {
                 this.cleanup();
+                this.saveState();
                 this.updateConnectionStatus('warning', 'Disconnected from server. Attempting to reconnect...');
                 
-                if (reason === 'io server disconnect') {
+                if (reason === 'io server disconnect' || reason === 'transport close') {
                     setTimeout(() => this.connect(), this.baseReconnectDelay);
                 }
             }
@@ -340,7 +484,10 @@
                 this.updateConnectionStatus('danger', message);
                 console.error('Connection error:', error);
                 
-                const delay = Math.min(this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+                const delay = Math.min(
+                    this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts),
+                    this.maxReconnectDelay
+                );
                 setTimeout(() => this.connect(), delay);
             }
 
@@ -352,16 +499,12 @@
             onReconnectFailed() {
                 const message = 'Could not connect to server. Please refresh the page to try again.';
                 this.updateConnectionStatus('danger', message);
+                this.showError('Connection Failed', message);
             }
 
             showInitializationError(error) {
-                const container = document.querySelector('.container');
-                if (container) {
-                    const alert = document.createElement('div');
-                    alert.className = 'alert alert-danger mt-3';
-                    alert.textContent = `Failed to initialize application: ${error.message}`;
-                    container.insertBefore(alert, container.firstChild);
-                }
+                this.domManager.showError('Initialization Error',
+                    `Failed to initialize application: ${error.message}`);
             }
 
             updateConnectionStatus(type, message) {
@@ -390,7 +533,8 @@
                 syncForm.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     if (!this.socket || !this.socket.connected) {
-                        this.showError('Connection Error', 'Not connected to server. Please wait for reconnection or refresh the page.');
+                        this.showError('Connection Error',
+                            'Not connected to server. Please wait for reconnection or refresh the page.');
                         return;
                     }
                     await this.handleFormSubmit(e);
@@ -400,6 +544,11 @@
                     if (document.visibilityState === 'visible') {
                         this.requestCurrentState();
                     }
+                });
+
+                // Handle beforeunload to save state
+                window.addEventListener('beforeunload', () => {
+                    this.saveState();
                 });
             }
 
@@ -431,55 +580,66 @@
 
             handleSyncProgress(data) {
                 this.state.update(data);
-                this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
-                
-                switch (data.status) {
-                    case 'processing':
-                        this.updateProgressBar(data);
-                        break;
-                    case 'completed':
-                        this.handleSyncComplete(data);
-                        break;
-                    case 'error':
-                        this.handleSyncError(data);
-                        break;
-                    case 'retrying':
-                        this.handleSyncRetry(data);
-                        break;
+                this.saveState();
+                this.updateUI(data);
+            }
+
+            updateUI(data) {
+                try {
+                    this.domManager.safeUpdateElement('progressSection', { style: { display: 'block' } });
+                    
+                    switch (data.status) {
+                        case 'processing':
+                            this.updateProgressBar(data);
+                            break;
+                        case 'completed':
+                            this.handleSyncComplete(data);
+                            break;
+                        case 'error':
+                            this.handleSyncError(data);
+                            break;
+                        case 'retrying':
+                            this.handleSyncRetry(data);
+                            break;
+                    }
+                } catch (error) {
+                    console.error('Error updating UI:', error);
+                    this.showError('UI Update Error',
+                        'Failed to update the interface. Please refresh the page.');
                 }
             }
 
             updateProgressBar(data) {
-                const progressBar = this.domManager.getElement('syncProgress');
-                const syncStatus = this.domManager.getElement('syncStatus');
-                const currentContact = this.domManager.getElement('currentContact');
-
-                this.domManager.safeUpdateElement('syncProgress', {
-                    classList: {
-                        remove: ['bg-danger', 'bg-warning', 'bg-success'],
-                        add: ['bg-primary']
-                    }
-                });
-                
-                if (data.total && data.current) {
-                    const percentage = Math.round((data.current / data.total) * 100);
+                try {
                     this.domManager.safeUpdateElement('syncProgress', {
-                        style: { width: `${percentage}%` },
-                        textContent: `${percentage}%`,
-                        'aria-valuenow': percentage
+                        classList: {
+                            remove: ['bg-danger', 'bg-warning', 'bg-success'],
+                            add: ['bg-primary']
+                        }
                     });
-                }
-                
-                this.domManager.safeUpdateElement('syncStatus', {
-                    className: 'text-muted mb-2',
-                    textContent: data.message || 'Processing...'
-                });
-                
-                if (data.contact) {
-                    this.domManager.safeUpdateElement('currentContact', {
-                        textContent: `Current contact: ${data.contact}`,
-                        style: { display: 'block' }
+                    
+                    if (data.total && data.current) {
+                        const percentage = Math.round((data.current / data.total) * 100);
+                        this.domManager.safeUpdateElement('syncProgress', {
+                            style: { width: `${percentage}%` },
+                            textContent: `${percentage}%`,
+                            'aria-valuenow': percentage
+                        });
+                    }
+                    
+                    this.domManager.safeUpdateElement('syncStatus', {
+                        className: 'text-muted mb-2',
+                        textContent: data.message || 'Processing...'
                     });
+                    
+                    if (data.contact) {
+                        this.domManager.safeUpdateElement('currentContact', {
+                            textContent: `Current contact: ${data.contact}`,
+                            style: { display: 'block' }
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error updating progress bar:', error);
                 }
             }
 
@@ -507,6 +667,8 @@
                 this.domManager.safeUpdateElement('errorDetails', {
                     style: { display: 'none' }
                 });
+
+                localStorage.removeItem('syncState');
             }
 
             handleSyncError(data) {
@@ -565,15 +727,21 @@
                 });
 
                 const errorDetails = this.domManager.getElement('errorDetails');
-                errorDetails.querySelector('.alert-heading').textContent = type;
-                errorDetails.querySelector('.error-message').textContent = message;
-                if (details) {
-                    errorDetails.querySelector('.error-details').textContent = details;
-                }
+                if (errorDetails) {
+                    const heading = errorDetails.querySelector('.alert-heading');
+                    const errorMessage = errorDetails.querySelector('.error-message');
+                    const errorDetailsText = errorDetails.querySelector('.error-details');
+                    
+                    if (heading) heading.textContent = type;
+                    if (errorMessage) errorMessage.textContent = message;
+                    if (errorDetailsText && details) {
+                        errorDetailsText.textContent = details;
+                    }
 
-                this.domManager.safeUpdateElement('errorDetails', {
-                    style: { display: 'block' }
-                });
+                    this.domManager.safeUpdateElement('errorDetails', {
+                        style: { display: 'block' }
+                    });
+                }
 
                 this.domManager.safeUpdateElement('syncButton', {
                     disabled: false
