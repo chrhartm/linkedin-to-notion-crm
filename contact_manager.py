@@ -47,18 +47,15 @@ class ContactManager:
             raise
 
     def _has_changes(self, existing_contact, new_contact):
-        """
-        Compare existing contact with new contact data to detect changes with improved logging
-        and string normalization.
-        """
         try:
             properties = existing_contact['properties']
             
-            # Helper function to normalize strings
             def normalize(s):
-                return str(s).strip() if s else ''
+                if not s:
+                    return ''
+                # Convert to string, strip whitespace, and lowercase for case-insensitive comparison
+                return str(s).strip().lower()
             
-            # Compare each field with logging
             fields_to_compare = [
                 ('Name', self._get_title_value(properties.get('Name')), new_contact.get('Name')),
                 ('Company', self._get_rich_text_value(properties.get('Company')), new_contact.get('Company')),
@@ -74,13 +71,15 @@ class ContactManager:
                 new_normalized = normalize(new_value)
                 
                 logging.debug(f"Comparing {field_name}:")
-                logging.debug(f"  Existing: '{existing_normalized}'")
-                logging.debug(f"  New: '{new_normalized}'")
+                logging.debug(f"  Existing: '{existing_value}' -> '{existing_normalized}'")
+                logging.debug(f"  New: '{new_value}' -> '{new_normalized}'")
                 
                 if existing_normalized != new_normalized:
-                    logging.info(f"Change detected in {field_name}: '{existing_normalized}' -> '{new_normalized}'")
+                    logging.info(f"Change detected in {field_name}:")
+                    logging.info(f"  Existing: '{existing_value}'")
+                    logging.info(f"  New: '{new_value}'")
                     return True
-                    
+            
             logging.info("No changes detected, skipping update")
             return False
         except Exception as e:

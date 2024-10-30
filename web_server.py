@@ -29,9 +29,9 @@ SYNC_TIMEOUT = 600  # 10 minutes timeout
 MAX_RETRIES = 3
 MAX_QUEUE_SIZE = 10
 
-# Configure logging with more detailed format
+# Configure logging with more detailed format and DEBUG level
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
 )
 
