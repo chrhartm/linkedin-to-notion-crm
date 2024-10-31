@@ -27,7 +27,7 @@ class NotionManager:
                 "LinkedIn URL": {"url": {}},
                 "Company": {"rich_text": {}},
                 "Position": {"rich_text": {}},
-                "Industry": {"select": {
+                "Industry": {"multi_select": {
                     "options": [
                         {"name": "Technology", "color": "blue"},
                         {"name": "Insurance", "color": "green"},
@@ -44,7 +44,7 @@ class NotionManager:
                         {"name": "Other", "color": "gray"}
                     ]
                 }},
-                "Field of Work": {"select": {
+                "Field of Work": {"multi_select": {
                     "options": [
                         {"name": "Software Development", "color": "blue"},
                         {"name": "Marketing", "color": "green"},
@@ -68,7 +68,7 @@ class NotionManager:
 #                    'expression': 'now() > prop("Last #Contacted").dateAdd(ifs(prop("Contact Schedule").equal("Weekly"),7,prop("Contact #Schedule").equal("Monthly"),30,prop("Contact #Schedule").equal("Quarterly"),90,prop("Contact #Schedule").equal("Yearly"),356,9999999999),"days")'
 #                }},
                 "Email": {"email": {}},
-                "Tags": {"multi_select": {
+                "Connection": {"select": {
                     "options": [
                         {"name": "Important", "color": "red"},
                         {"name": "Follow-up", "color": "blue"},
