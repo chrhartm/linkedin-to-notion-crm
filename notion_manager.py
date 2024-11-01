@@ -112,20 +112,17 @@ class NotionManager:
                 "Contact Schedule": {
                     "select": {
                         "options": [{
-                            "name": "Daily",
-                            "color": "red"
-                        }, {
                             "name": "Weekly",
                             "color": "blue"
                         }, {
                             "name": "Monthly",
                             "color": "yellow"
                         }, {
+                            "name": "Quarterly",
+                            "color": "red"
+                        }, {
                             "name": "Yearly",
                             "color": "brown"
-                        }, {
-                            "name": "As Needed",
-                            "color": "gray"
                         }]
                     }
                 },
@@ -220,14 +217,15 @@ class NotionManager:
             for prop_name, prop_value in new_properties.items():
                 if prop_name not in current_properties:
                     current_properties[prop_name] = prop_value
-                elif prop_value.get('select') or prop_value.get('multi_select'):
+                elif prop_value.get('select') or prop_value.get(
+                        'multi_select'):
                     # For select and multi_select, merge options
                     existing_options = set(
                         option['name']
                         for option in current_properties[prop_name].get(
                             'select', {}).get('options', []))
-                    for new_option in prop_value.get('select', {}).get('options',
-                                                                      []):
+                    for new_option in prop_value.get('select',
+                                                     {}).get('options', []):
                         if new_option['name'] not in existing_options:
                             current_properties[prop_name]['select'][
                                 'options'].append(new_option)
@@ -235,23 +233,26 @@ class NotionManager:
             # Update database properties
             try:
                 self.client.databases.update(database_id=self.database_id,
-                                          properties=current_properties)
+                                             properties=current_properties)
                 logging.info(
                     f"Updated database properties for database ID: {self.database_id}"
                 )
-
-                # Add or update overdue logic with correct formula structure
-                logging.info(f"Adding/updating overdue logic to database properties")
-                overdue_formula = {
-                    'formula': {
-                        'expression': 'and(not(empty(prop("Last Contacted"))), not(empty(prop("Contact Schedule"))), not(prop("Contact Schedule") == "As Needed"), dateBetween(prop("Last Contacted"), now(), "days") > if(prop("Contact Schedule") == "Daily", 1, if(prop("Contact Schedule") == "Weekly", 7, if(prop("Contact Schedule") == "Monthly", 30, if(prop("Contact Schedule") == "Yearly", 365, 0)))))'
+                # Add after other updating to make sure referenced fields exist
+                if "Overdue" not in current_properties:
+                    # Add or update overdue logic with correct formula structure
+                    logging.info(
+                        f"Adding/updating overdue logic to database properties"
+                    )
+                    overdue_formula = {
+                        'formula': {
+                            'expression': ('''if(and(not(empty(prop("Contact Schedule"))), empty(prop("Last Contacted"))),true,now() > dateAdd(prop("Last Contacted"), if(prop("Contact Schedule")=="Weekly", 7, if(prop("Contact Schedule")=="Monthly", 30, if(prop("Contact Schedule")=="Quarterly", 90, if(prop("Contact Schedule")=="Yearly", 360, 999999999)))), "days"))''')
+                        }
                     }
-                }
-                current_properties["Overdue"] = overdue_formula
+                    current_properties["Overdue"] = overdue_formula
 
-                self.client.databases.update(database_id=self.database_id,
-                                          properties=current_properties)
-                logging.info(f"Updated overdue logic successfully")
+                    self.client.databases.update(database_id=self.database_id,
+                                                 properties=current_properties)
+                    logging.info(f"Updated overdue logic successfully")
             except Exception as e:
                 logging.error(f"Error updating database formula: {str(e)}")
                 # Continue execution even if formula update fails
@@ -317,7 +318,7 @@ class NotionManager:
             }
 
             self.client.pages.create(parent={"database_id": self.database_id},
-                                  properties=properties)
+                                     properties=properties)
             logging.info(f"Added contact: {contact.get('Name', 'Unknown')}")
         except Exception as e:
             logging.error(f"Error adding contact: {str(e)}")
