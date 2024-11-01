@@ -97,9 +97,6 @@ class NotionManager:
                         }, {
                             "name": "Operations",
                             "color": "yellow"
-                        }, {
-                            "name": "Other",
-                            "color": "gray"
                         }]
                     }
                 },
@@ -132,6 +129,9 @@ class NotionManager:
                 "Connection": {
                     "select": {
                         "options": [{
+                            "name": "Don't know",
+                            "color": "gray"
+                        }, {
                             "name": "Minimal",
                             "color": "red"
                         }, {
@@ -208,6 +208,10 @@ class NotionManager:
                                 "name": "Founder",
                                 "color": "brown"
                             },
+                            {
+                                "name": "Self-Employed",
+                                "color": "gray"
+                            },
                         ]
                     }
                 },
@@ -245,7 +249,9 @@ class NotionManager:
                     )
                     overdue_formula = {
                         'formula': {
-                            'expression': ('''if(and(not(empty(prop("Contact Schedule"))), empty(prop("Last Contacted"))),true,now() > dateAdd(prop("Last Contacted"), if(prop("Contact Schedule")=="Weekly", 7, if(prop("Contact Schedule")=="Monthly", 30, if(prop("Contact Schedule")=="Quarterly", 90, if(prop("Contact Schedule")=="Yearly", 360, 999999999)))), "days"))''')
+                            'expression':
+                            ('''if(and(not(empty(prop("Contact Schedule"))), empty(prop("Last Contacted"))),true,now() > dateAdd(prop("Last Contacted"), if(prop("Contact Schedule")=="Weekly", 7, if(prop("Contact Schedule")=="Monthly", 30, if(prop("Contact Schedule")=="Quarterly", 90, if(prop("Contact Schedule")=="Yearly", 360, 999999999)))), "days"))'''
+                             )
                         }
                     }
                     current_properties["Overdue"] = overdue_formula
