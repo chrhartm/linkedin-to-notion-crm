@@ -64,15 +64,12 @@ class NotionManager:
                         {"name": "As Needed", "color": "gray"}
                     ]
                 }},
-#                'Overdue': {'formula': {
-#                    'expression': 'now() > prop("Last #Contacted").dateAdd(ifs(prop("Contact Schedule").equal("Weekly"),7,prop("Contact #Schedule").equal("Monthly"),30,prop("Contact #Schedule").equal("Quarterly"),90,prop("Contact #Schedule").equal("Yearly"),356,9999999999),"days")'
-#                }},
                 "Email": {"email": {}},
                 "Connection": {"select": {
                     "options": [
-                        {"name": "Important", "color": "red"},
-                        {"name": "Follow-up", "color": "blue"},
-                        {"name": "New Connection", "color": "green"}
+                        {"name": "Minimal", "color": "red"},
+                        {"name": "Would answer", "color": "blue"},
+                        {"name": "Friend", "color": "green"}
                     ]
                 }},
                 "Community": {"multi_select": {
@@ -82,11 +79,26 @@ class NotionManager:
                         {"name": "Toastmasters", "color": "green"}
                     ]
                 }},
-                "Location": {"select": {
+                "Location": {"multi_select": {
                     "options": [
                         {"name": "Berlin", "color": "red"},
                         {"name": "Amsterdam", "color": "blue"},
                         {"name": "London", "color": "green"}
+                    ]
+                }},
+                "Past companies": {"multi_select": {
+                    "options": [
+                        {"name": "AWS", "color": "red"},
+                        {"name": "BCG", "color": "blue"},
+                    ]
+                }},
+                "Level": {"select": {
+                    "options": [
+                        {"name": "IC", "color": "red"},
+                        {"name": "Lead", "color": "blue"},
+                        {"name": "Director", "color": "green"},
+                        {"name": "C-level", "color": "yellow"},
+                        {"name": "Founder", "color": "brown"},
                     ]
                 }},
             }
@@ -102,11 +114,32 @@ class NotionManager:
                         if new_option['name'] not in existing_options:
                             current_properties[prop_name]['select']['options'].append(new_option)
 
-            self.client.databases.update(
-                database_id=self.database_id,
-                properties=current_properties
-            )
-            logging.info(f"Updated database properties for database ID: {self.database_id}")
+            # Update database properties
+            try:
+                self.client.databases.update(
+                    database_id=self.database_id,
+                    properties=current_properties
+                )
+                logging.info(f"Updated database properties for database ID: {self.database_id}")
+
+                # Add overdue logic if overdue not in current_properties
+                if "Overdue" not in current_properties:
+                    logging.info(f"Adding overdue logic to database properties")
+                    current_properties["Overdue"] = {
+                        'formula': {
+                            'expression': 'now() > prop("Last Contacted") + duration(if(prop("Contact Schedule") == "Weekly", 7, if(prop("Contact Schedule") == "Monthly", 30, if(prop("Contact Schedule") == "Yearly", 365, 9999999))) + "days")'
+                        }
+                    }
+                    self.client.databases.update(
+                        database_id=self.database_id,
+                        properties=current_properties
+                    )
+                    logging.info(f"Updated overdue logic successfully")
+            except Exception as e:
+                logging.error(f"Error updating database formula: {str(e)}")
+                # Continue execution even if formula update fails
+                pass
+        
         except Exception as e:
             logging.error(f"Error updating database properties: {str(e)}")
             raise ValueError(f"Failed to update database properties. Error: {str(e)}")

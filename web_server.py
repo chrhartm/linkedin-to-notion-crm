@@ -106,24 +106,30 @@ def process_sync_queue():
 
                 # Step 1: Parse LinkedIn contacts
                 logging.info(f"Starting LinkedIn file parsing: {filepath}")
+                logging.debug(f"Reading CSV file from path: {filepath}")
                 emit_sync_progress({
                     'status': 'processing',
                     'message': 'Loading LinkedIn contacts from CSV file...'
                 }, room)
                 linkedin_contacts = linkedin_parser.parse_linkedin_export(filepath)
                 logging.info(f"Successfully parsed {len(linkedin_contacts)} contacts from LinkedIn CSV")
+                logging.debug("CSV parsing completed successfully")
 
                 # Step 2: Load Notion contacts
+                logging.info("Starting Notion database connection")
                 emit_sync_progress({
                     'status': 'processing',
                     'message': 'Loading existing contacts from Notion database...'
                 }, room)
                 existing_contacts = contact_manager.get_all_contacts()
                 logging.info(f"Retrieved {len(existing_contacts)} existing contacts from Notion database")
+                logging.debug("Notion database connection and retrieval successful")
 
                 total_contacts = len(linkedin_contacts)
                 valid_contacts = sum(1 for c in linkedin_contacts if contact_manager._is_valid_contact(c))
+                invalid_contacts = total_contacts - valid_contacts
                 logging.info(f"Found {valid_contacts} valid contacts out of {total_contacts} total contacts")
+                logging.debug(f"Skipping {invalid_contacts} invalid contacts")
 
                 emit_sync_progress({
                     'status': 'processing',
@@ -137,12 +143,23 @@ def process_sync_queue():
                 skipped_count = 0
                 updated_count = 0
                 added_count = 0
+                error_count = 0
                 for index, contact in enumerate(linkedin_contacts, 1):
                     contact_name = contact.get('Name', 'Unknown Contact')
+                    linkedin_url = contact.get('LinkedIn URL', 'No URL')
+                    company = contact.get('Company', 'No Company')
+                    position = contact.get('Position', 'No Position')
+                    
+                    logging.debug(f"Processing contact {index}/{total_contacts}:")
+                    logging.debug(f"  Name: {contact_name}")
+                    logging.debug(f"  LinkedIn URL: {linkedin_url}")
+                    logging.debug(f"  Company: {company}")
+                    logging.debug(f"  Position: {position}")
                     
                     if not contact_manager._is_valid_contact(contact):
                         skipped_count += 1
-                        logging.debug(f"Skipping invalid contact: {contact_name}")
+                        logging.info(f"Skipping invalid contact: {contact_name}")
+                        logging.debug(f"  Reason: Missing required fields")
                         continue
 
                     processed_count += 1
@@ -160,25 +177,40 @@ def process_sync_queue():
                     try:
                         existing_contact = next(
                             (existing for existing in existing_contacts 
-                             if existing['properties'].get('LinkedIn URL', {}).get('url') == contact.get('LinkedIn URL')),
+                             if existing['properties'].get('LinkedIn URL', {}).get('url') == linkedin_url),
                             None
                         )
                         
                         if existing_contact:
+                            logging.debug(f"Found existing contact in Notion database")
                             # Check if contact actually needed updates
                             if contact_manager._has_changes(existing_contact, contact):
+                                logging.info(f"Changes detected for contact: {contact_name}")
                                 contact_manager._process_single_contact(contact, existing_contacts)
                                 updated_count += 1
-                                logging.info(f"Updated contact with changes: {contact.get('Name')}")
+                                logging.info(f"Successfully updated contact: {contact_name}")
+                                logging.debug(f"  Updated fields for {contact_name}:")
+                                logging.debug(f"    Company: {company}")
+                                logging.debug(f"    Position: {position}")
                             else:
                                 skipped_count += 1
-                                logging.info(f"Skipped contact (no changes): {contact.get('Name')}")
+                                logging.info(f"No changes detected, skipping contact: {contact_name}")
                         else:
+                            logging.info(f"Adding new contact to database: {contact_name}")
                             contact_manager._process_single_contact(contact, existing_contacts)
                             added_count += 1
-                            logging.info(f"Added new contact: {contact.get('Name')}")
+                            logging.info(f"Successfully added new contact: {contact_name}")
+                            logging.debug(f"  Added new contact with fields:")
+                            logging.debug(f"    Name: {contact_name}")
+                            logging.debug(f"    Company: {company}")
+                            logging.debug(f"    Position: {position}")
                     except Exception as e:
+                        error_count += 1
                         logging.error(f"Error processing contact {contact_name}: {str(e)}")
+                        logging.debug(f"  Error details for {contact_name}:")
+                        logging.debug(f"    Error type: {type(e).__name__}")
+                        logging.debug(f"    Error message: {str(e)}")
+                        logging.debug(f"    Stack trace:\n{traceback.format_exc()}")
                         raise
 
                 end_time = time()
@@ -186,9 +218,18 @@ def process_sync_queue():
                 success_message = (
                     f"Sync completed successfully in {duration}s! "
                     f"Processed {processed_count} contacts "
-                    f"({added_count} added, {updated_count} updated, {skipped_count} skipped)"
+                    f"({added_count} added, {updated_count} updated, {skipped_count} skipped, {error_count} errors)"
                 )
                 logging.info(success_message)
+                logging.debug("Final sync statistics:")
+                logging.debug(f"  Total contacts: {total_contacts}")
+                logging.debug(f"  Valid contacts: {valid_contacts}")
+                logging.debug(f"  Invalid contacts: {invalid_contacts}")
+                logging.debug(f"  Added: {added_count}")
+                logging.debug(f"  Updated: {updated_count}")
+                logging.debug(f"  Skipped: {skipped_count}")
+                logging.debug(f"  Errors: {error_count}")
+                logging.debug(f"  Duration: {duration}s")
                 
                 emit_sync_progress({
                     'status': 'completed',
