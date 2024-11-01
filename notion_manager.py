@@ -122,19 +122,29 @@ class NotionManager:
                 )
                 logging.info(f"Updated database properties for database ID: {self.database_id}")
 
-                # Add overdue logic if overdue not in current_properties
-                if "Overdue" not in current_properties:
-                    logging.info(f"Adding overdue logic to database properties")
-                    current_properties["Overdue"] = {
-                        'formula': {
-                            'expression': 'now() > prop("Last Contacted") + duration(if(prop("Contact Schedule") == "Weekly", 7, if(prop("Contact Schedule") == "Monthly", 30, if(prop("Contact Schedule") == "Yearly", 365, 9999999))) + "days")'
-                        }
+                # Add or update overdue logic with correct formula structure
+                logging.info(f"Adding/updating overdue logic to database properties")
+                overdue_formula = {
+                    'formula': {
+                        'expression': (
+                            'if(prop("Contact Schedule") == "As Needed", false, ' +
+                            'if(prop("Last Contacted") == null, false, ' +
+                            'now() > dateAdd(prop("Last Contacted"), ' +
+                            'if(prop("Contact Schedule") == "Daily", 1, ' +
+                            'if(prop("Contact Schedule") == "Weekly", 7, ' +
+                            'if(prop("Contact Schedule") == "Monthly", 30, ' +
+                            'if(prop("Contact Schedule") == "Yearly", 365, 0)))), "days"))'
+                        )
                     }
-                    self.client.databases.update(
-                        database_id=self.database_id,
-                        properties=current_properties
-                    )
-                    logging.info(f"Updated overdue logic successfully")
+                }
+                
+                current_properties["Overdue"] = overdue_formula
+                
+                self.client.databases.update(
+                    database_id=self.database_id,
+                    properties=current_properties
+                )
+                logging.info(f"Updated overdue logic successfully")
             except Exception as e:
                 logging.error(f"Error updating database formula: {str(e)}")
                 # Continue execution even if formula update fails
