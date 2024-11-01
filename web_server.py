@@ -31,7 +31,7 @@ MAX_QUEUE_SIZE = 10
 
 # Configure logging with more detailed format and DEBUG level
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
 )
 
@@ -70,7 +70,6 @@ def emit_sync_progress(data, room=None):
     with app.app_context():
         try:
             socketio.emit('sync_progress', data, room=room)
-            logging.debug(f"Progress emitted: {data.get('status')} - {data.get('message')}")
         except Exception as e:
             logging.error(f"Error emitting sync progress: {str(e)}")
 
@@ -152,9 +151,6 @@ def process_sync_queue():
                     
                     logging.debug(f"Processing contact {index}/{total_contacts}:")
                     logging.debug(f"  Name: {contact_name}")
-                    logging.debug(f"  LinkedIn URL: {linkedin_url}")
-                    logging.debug(f"  Company: {company}")
-                    logging.debug(f"  Position: {position}")
                     
                     if not contact_manager._is_valid_contact(contact):
                         skipped_count += 1
@@ -189,9 +185,7 @@ def process_sync_queue():
                                 contact_manager._process_single_contact(contact, existing_contacts)
                                 updated_count += 1
                                 logging.info(f"Successfully updated contact: {contact_name}")
-                                logging.debug(f"  Updated fields for {contact_name}:")
-                                logging.debug(f"    Company: {company}")
-                                logging.debug(f"    Position: {position}")
+                                logging.debug(f"  Updated fields for {contact_name}")
                             else:
                                 skipped_count += 1
                                 logging.info(f"No changes detected, skipping contact: {contact_name}")
@@ -202,8 +196,6 @@ def process_sync_queue():
                             logging.info(f"Successfully added new contact: {contact_name}")
                             logging.debug(f"  Added new contact with fields:")
                             logging.debug(f"    Name: {contact_name}")
-                            logging.debug(f"    Company: {company}")
-                            logging.debug(f"    Position: {position}")
                     except Exception as e:
                         error_count += 1
                         logging.error(f"Error processing contact {contact_name}: {str(e)}")
@@ -379,4 +371,4 @@ def sync_contacts():
         )
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=3000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=3000, debug=False)
