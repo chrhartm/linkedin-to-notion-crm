@@ -126,6 +126,9 @@ class NotionManager:
                 "Email": {
                     "email": {}
                 },
+                "Updated": {
+                    "checkbox": {}
+                },
                 "Connection": {
                     "select": {
                         "options": [{
@@ -354,6 +357,10 @@ class NotionManager:
                         }]
                     }
 
+            # Add property for udpated checkbox with checked status
+            properties["Updated"] = {
+                "checkbox": True
+            }
             # Remove any properties with None or empty string values
             properties = {
                 k: v
